@@ -1,0 +1,42 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Metrics: "up" is produced by Prometheus while scraping /prom (not exported by OM).
+# Ozone /prom serves Hadoop metrics2 (e.g. jvm_metrics_*) via PrometheusMetricsSink;
+# process_start_time_seconds is not published there.
+
+groups:
+  - name: ozone_om
+    rules:
+      - alert: OzoneOmDown
+        expr: |
+          up{job="ozone", component="om"} == 0
+          and up{job="ozone", component="om"} offset 30m == 1
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: Ozone Manager scrape target is down
+          description: Prometheus cannot scrape OM at {{ $labels.instance }}.
+
+      - alert: OzoneOmRestarted
+        expr: changes(up{job="ozone", component="om"}[15m]) >= 2
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ozone Manager process restarted
+          description: OM at {{ $labels.instance }} was unreachable and recovered (scrape up flapped).
