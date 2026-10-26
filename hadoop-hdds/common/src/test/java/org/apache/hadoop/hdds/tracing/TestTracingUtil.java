@@ -31,16 +31,20 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.ContextStorage;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.ReadableSpan;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.apache.hadoop.hdds.conf.InMemoryConfigurationForTesting;
@@ -333,5 +337,146 @@ public class TestTracingUtil {
     } finally {
       executor.shutdownNow();
     }
+  }
+
+  @Test
+  public void testCreateSpanIsChildOfCurrentSpan() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span parent = TracingUtil.createSpan("parent");
+      try (Scope ignored = parent.makeCurrent()) {
+        Span child = TracingUtil.createSpan("child", SpanKind.CLIENT);
+        child.end();
+      } finally {
+        parent.end();
+      }
+
+      SpanData parentData = finishedSpan(collector, "parent");
+      SpanData childData = finishedSpan(collector, "child");
+      assertEquals(SpanKind.INTERNAL, parentData.getKind());
+      assertEquals(SpanKind.CLIENT, childData.getKind());
+      assertEquals(parentData.getTraceId(), childData.getTraceId());
+      assertEquals(parentData.getSpanId(), childData.getParentSpanId());
+    }
+  }
+
+  @Test
+  public void testCreateSpanWithoutParentStartsRootWhenEnabled() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span span = TracingUtil.createSpan("root");
+      assertTrue(span.getSpanContext().isValid());
+      span.end();
+      assertFalse(finishedSpan(collector, "root").getParentSpanContext().isValid());
+    }
+  }
+
+  @Test
+  public void testRecordExceptionSetsErrorAndAddsEvent() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span span = TracingUtil.createSpan("failing");
+      TracingUtil.recordException(span, new IOException("disk failed"));
+      span.end();
+
+      SpanData data = finishedSpan(collector, "failing");
+      assertEquals(StatusCode.ERROR, data.getStatus().getStatusCode());
+      assertEquals("disk failed", data.getStatus().getDescription());
+      assertEquals(1, data.getEvents().size());
+      assertEquals("exception", data.getEvents().get(0).getName());
+      assertEquals(IOException.class.getName(),
+          data.getEvents().get(0).getAttributes().get(AttributeKey.stringKey("exception.type")));
+    }
+  }
+
+  @Test
+  public void testRecordExceptionWithoutMessageSetsError() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span span = TracingUtil.createSpan("failing");
+      try (Scope ignored = span.makeCurrent()) {
+        TracingUtil.recordExceptionInCurrentSpan(new IllegalStateException());
+      } finally {
+        span.end();
+      }
+      SpanData data = finishedSpan(collector, "failing");
+      assertEquals(StatusCode.ERROR, data.getStatus().getStatusCode());
+      assertEquals("", data.getStatus().getDescription());
+    }
+  }
+
+  @Test
+  public void testRecordExceptionIgnoresInvalidSpanAndNulls() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      TracingUtil.recordException(Span.getInvalid(), new IOException("ignored"));
+      TracingUtil.recordException(null, new IOException("ignored"));
+      Span span = TracingUtil.createSpan("ok");
+      TracingUtil.recordException(span, null);
+      span.end();
+      assertEquals(StatusCode.UNSET, finishedSpan(collector, "ok").getStatus().getStatusCode());
+    }
+  }
+
+  @Test
+  public void testCurrentSpanHelpersSetAttributesAndEvents() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span span = TracingUtil.createSpan("request");
+      try (Scope ignored = span.makeCurrent()) {
+        TracingUtil.addAttributesToCurrentSpan("volume", "vol1");
+        TracingUtil.addAttributesToCurrentSpan("bucket", (String) null);
+        TracingUtil.addAttributesToCurrentSpan("dataSize", 1024L);
+        TracingUtil.addAttributesToCurrentSpan("om.success", false);
+        TracingUtil.addEventToCurrentSpan("client.datanode.failover", "datanode", "dn1");
+        TracingUtil.addEventToCurrentSpan("scm.allocate.failed", "reason", null);
+      } finally {
+        span.end();
+      }
+
+      SpanData data = finishedSpan(collector, "request");
+      assertEquals("vol1", data.getAttributes().get(AttributeKey.stringKey("volume")));
+      assertNull(data.getAttributes().get(AttributeKey.stringKey("bucket")));
+      assertEquals(1024L, data.getAttributes().get(AttributeKey.longKey("dataSize")));
+      assertEquals(false, data.getAttributes().get(AttributeKey.booleanKey("om.success")));
+      assertEquals(StatusCode.UNSET, data.getStatus().getStatusCode());
+
+      assertEquals(2, data.getEvents().size());
+      assertEquals("client.datanode.failover", data.getEvents().get(0).getName());
+      assertEquals("dn1", data.getEvents().get(0).getAttributes().get(AttributeKey.stringKey("datanode")));
+      assertEquals("scm.allocate.failed", data.getEvents().get(1).getName());
+      assertTrue(data.getEvents().get(1).getAttributes().isEmpty());
+    }
+  }
+
+  @Test
+  public void testMarkCurrentSpanError() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span span = TracingUtil.createSpan("request");
+      try (Scope ignored = span.makeCurrent()) {
+        TracingUtil.markCurrentSpanError("KEY_NOT_FOUND", "Key not found");
+      } finally {
+        span.end();
+      }
+      SpanData data = finishedSpan(collector, "request");
+      assertEquals(StatusCode.ERROR, data.getStatus().getStatusCode());
+      assertEquals("Key not found", data.getStatus().getDescription());
+      assertEquals("KEY_NOT_FOUND", data.getAttributes().get(AttributeKey.stringKey(SpanAttributeKeys.STATUS)));
+    }
+  }
+
+  @Test
+  public void testCurrentSpanHelpersWithoutCurrentSpanAreNoOp() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      assertFalse(Span.current().getSpanContext().isValid());
+      TracingUtil.addAttributesToCurrentSpan("volume", "vol1");
+      TracingUtil.addAttributesToCurrentSpan("dataSize", 1L);
+      TracingUtil.addAttributesToCurrentSpan("om.success", true);
+      TracingUtil.addEventToCurrentSpan("event", "k", "v");
+      TracingUtil.markCurrentSpanError("KEY_NOT_FOUND", "Key not found");
+      TracingUtil.recordExceptionInCurrentSpan(new IOException("ignored"));
+      assertTrue(collector.getSpans().isEmpty());
+    }
+  }
+
+  /** @return the only collected span named {@code name}; fails the test if there is not exactly one. */
+  private static SpanData finishedSpan(TestSpanCollector collector, String name) {
+    List<ReadableSpan> spans = collector.named(name);
+    assertEquals(1, spans.size(), () -> "spans named " + name + ": " + collector.getSpans());
+    return spans.get(0).toSpanData();
   }
 }

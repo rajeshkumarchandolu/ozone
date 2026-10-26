@@ -557,6 +557,95 @@ public final class TracingUtil {
   }
 
   /**
+   * Creates a new span without making it current; the caller must make it current and end it.
+   * The span is a child of the current span if that is valid; otherwise a root span is started only when
+   * {@code ozone.tracing.enabled=true}, and an invalid span is returned in application-aware mode.
+   * Use {@link #importAndCreateSpan(String, String)} instead on a thread that does not carry the parent context.
+   */
+  public static Span createSpan(String spanName) {
+    return createSpan(spanName, SpanKind.INTERNAL);
+  }
+
+  public static Span createSpan(String spanName, SpanKind spanKind) {
+    return buildSpan(spanName, spanKind);
+  }
+
+  /**
+   * Records {@code t} as an exception event on {@code span} and sets its status to ERROR.
+   * No-op if the span is not recording.
+   */
+  public static void recordException(Span span, Throwable t) {
+    if (span == null || t == null || !span.isRecording()) {
+      return;
+    }
+    span.recordException(t);
+    setErrorStatus(span, t.getMessage());
+  }
+
+  /** Same as {@link #recordException(Span, Throwable)} for the current span. */
+  public static void recordExceptionInCurrentSpan(Throwable t) {
+    recordException(Span.current(), t);
+  }
+
+  /** Adds the attribute to the current span; a {@code null} value is skipped. */
+  public static void addAttributesToCurrentSpan(String key, String value) {
+    Span span = Span.current();
+    if (value != null && span.isRecording()) {
+      span.setAttribute(key, value);
+    }
+  }
+
+  public static void addAttributesToCurrentSpan(String key, long value) {
+    Span span = Span.current();
+    if (span.isRecording()) {
+      span.setAttribute(key, value);
+    }
+  }
+
+  public static void addAttributesToCurrentSpan(String key, boolean value) {
+    Span span = Span.current();
+    if (span.isRecording()) {
+      span.setAttribute(key, value);
+    }
+  }
+
+  /**
+   * Marks the current span as failed for an error that is returned in a response instead of thrown:
+   * sets {@link SpanAttributeKeys#STATUS} to {@code statusCode} and the span status to ERROR.
+   */
+  public static void markCurrentSpanError(String statusCode, String message) {
+    Span span = Span.current();
+    if (!span.isRecording()) {
+      return;
+    }
+    if (statusCode != null) {
+      span.setAttribute(SpanAttributeKeys.STATUS, statusCode);
+    }
+    setErrorStatus(span, message);
+  }
+
+  /** Adds an event with one attribute to the current span; a {@code null} value is skipped. */
+  public static void addEventToCurrentSpan(String name, String key, String value) {
+    Span span = Span.current();
+    if (!span.isRecording()) {
+      return;
+    }
+    if (value == null) {
+      span.addEvent(name);
+    } else {
+      span.addEvent(name, Attributes.of(AttributeKey.stringKey(key), value));
+    }
+  }
+
+  private static void setErrorStatus(Span span, String message) {
+    if (message == null) {
+      span.setStatus(StatusCode.ERROR);
+    } else {
+      span.setStatus(StatusCode.ERROR, message);
+    }
+  }
+
+  /**
    * AutoCloseable interface for tracing span but no exception is thrown in close.
    */
   public interface TraceCloseable extends AutoCloseable {
