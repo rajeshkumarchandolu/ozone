@@ -51,6 +51,7 @@ import org.apache.hadoop.hdds.conf.InMemoryConfigurationForTesting;
 import org.apache.hadoop.hdds.conf.MutableConfigurationSource;
 import org.apache.hadoop.hdds.tracing.TestTraceAllMethod.Service;
 import org.apache.hadoop.hdds.tracing.TestTraceAllMethod.ServiceImpl;
+import org.apache.ratis.util.function.CheckedRunnable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
@@ -470,6 +471,54 @@ public class TestTracingUtil {
       TracingUtil.markCurrentSpanError("KEY_NOT_FOUND", "Key not found");
       TracingUtil.recordExceptionInCurrentSpan(new IOException("ignored"));
       assertTrue(collector.getSpans().isEmpty());
+    }
+  }
+
+  @Test
+  public void testExecuteInNewSpanRecordsException() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      assertThrows(IOException.class, () -> TracingUtil.executeInNewSpan("supplier", () -> {
+        throw new IOException("supplier failed");
+      }));
+      CheckedRunnable<IOException> failingRunnable = () -> {
+        throw new IllegalStateException("runnable failed");
+      };
+      assertThrows(IllegalStateException.class, () -> TracingUtil.executeInNewSpan("runnable", failingRunnable));
+
+      SpanData supplier = finishedSpan(collector, "supplier");
+      assertEquals(StatusCode.ERROR, supplier.getStatus().getStatusCode());
+      assertEquals("supplier failed", supplier.getStatus().getDescription());
+      assertEquals("exception", supplier.getEvents().get(0).getName());
+      SpanData runnable = finishedSpan(collector, "runnable");
+      assertEquals(StatusCode.ERROR, runnable.getStatus().getStatusCode());
+      assertEquals(IllegalStateException.class.getName(),
+          runnable.getEvents().get(0).getAttributes().get(AttributeKey.stringKey("exception.type")));
+    }
+  }
+
+  @Test
+  public void testImportAndCreateSpanMalformedParentStartsRootWhenEnabled() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span span = TracingUtil.importAndCreateSpan("child", "garbage");
+      assertTrue(span.getSpanContext().isValid());
+      span.end();
+      assertFalse(finishedSpan(collector, "child").getParentSpanContext().isValid());
+    }
+  }
+
+  @Test
+  public void testTraceStateSurvivesImport() {
+    String carrier = "traceparent=00-" + TRACE_ID + "-" + PARENT_SPAN_ID + "-01;"
+        + "tracestate=rojo=00f067aa0ba902b7,congo=t61r;";
+    assertEquals("rojo=00f067aa0ba902b7,congo=t61r", new TracingUtil.TextExtractor().get(carrier, "tracestate"));
+
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Span span = TracingUtil.importAndCreateSpan("child", carrier);
+      span.end();
+      SpanData data = finishedSpan(collector, "child");
+      assertEquals(TRACE_ID, data.getTraceId());
+      assertEquals(PARENT_SPAN_ID, data.getParentSpanId());
+      assertEquals("t61r", data.getSpanContext().getTraceState().get("congo"));
     }
   }
 

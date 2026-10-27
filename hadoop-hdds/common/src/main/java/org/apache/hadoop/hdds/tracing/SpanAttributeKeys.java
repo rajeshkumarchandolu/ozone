@@ -26,6 +26,18 @@ public final class SpanAttributeKeys {
   /** Status or result code of a failed request, for example KEY_NOT_FOUND. */
   public static final String STATUS = "ozone.status";
 
+  /** Datanode a client request was sent to, as {@code DatanodeDetails.toString()}. */
+  public static final String DATANODE = "hdds.datanode";
+
+  /** Full sub-command path of a CLI command, for example {@code ozone sh key put}. */
+  public static final String CLI_COMMAND = "cli.command";
+
+  /** Positional arguments of a CLI command, separated by spaces. */
+  public static final String CLI_ARGS = "cli.args";
+
+  /** Prefix of a CLI option attribute, followed by the option's longest name, for example {@code cli.option.--type}. */
+  public static final String CLI_OPTION_PREFIX = "cli.option.";
+
   private SpanAttributeKeys() {
   }
 }

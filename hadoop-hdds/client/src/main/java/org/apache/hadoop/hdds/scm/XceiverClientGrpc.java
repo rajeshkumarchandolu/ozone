@@ -20,7 +20,9 @@ package org.apache.hadoop.hdds.scm;
 import static org.apache.hadoop.hdds.HddsUtils.processForDebug;
 
 import com.google.common.annotations.VisibleForTesting;
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.context.Scope;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
@@ -59,6 +61,7 @@ import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.security.SecurityConfig;
 import org.apache.hadoop.hdds.security.exception.SCMSecurityException;
 import org.apache.hadoop.hdds.tracing.GrpcClientInterceptor;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
 import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.ClientVersion;
 import org.apache.hadoop.ozone.OzoneConfigKeys;
@@ -497,16 +500,22 @@ public class XceiverClientGrpc extends XceiverClientSpi {
     List<DatanodeDetails> datanodeList = sortDatanodes(request);
 
     for (DatanodeDetails dn : datanodeList) {
-      try {
+      Span span = TracingUtil.createSpan("Client.sendToDatanode", SpanKind.CLIENT);
+      try (Scope ignored = span.makeCurrent()) {
+        span.setAttribute(SpanAttributeKeys.DATANODE, dn.toString());
         if (LOG.isDebugEnabled()) {
           LOG.debug("Executing command {} on datanode {}",
               processForDebug(request), dn);
         }
+
+        ContainerCommandRequestProto tracableRequest = span.getSpanContext().isValid()
+            ? request.toBuilder().setTraceID(TracingUtil.exportCurrentSpan()).build()
+            : request;
         // In case the command gets retried on a 2nd datanode,
         // sendCommandAsyncCall will create a new channel and async stub
         // in case these don't exist for the specific datanode.
         reply.addDatanode(dn);
-        responseProto = sendCommandAsync(request, dn).getResponse().get();
+        responseProto = sendCommandAsync(tracableRequest, dn).getResponse().get();
         if (validators != null && !validators.isEmpty()) {
           for (Validator validator : validators) {
             validator.accept(request, responseProto);
@@ -518,6 +527,7 @@ public class XceiverClientGrpc extends XceiverClientSpi {
         }
         break;
       } catch (IOException e) {
+        TracingUtil.recordException(span, e);
         ioException = e;
         responseProto = null;
         if (LOG.isDebugEnabled()) {
@@ -525,6 +535,7 @@ public class XceiverClientGrpc extends XceiverClientSpi {
               processForDebug(request), dn, e);
         }
       } catch (ExecutionException e) {
+        TracingUtil.recordException(span, e);
         if (LOG.isDebugEnabled()) {
           LOG.debug("Failed to execute command {} on datanode {}",
               processForDebug(request), dn, e);
@@ -537,11 +548,14 @@ public class XceiverClientGrpc extends XceiverClientSpi {
 
         ioException = new IOException(e);
       } catch (InterruptedException e) {
+        TracingUtil.recordException(span, e);
         LOG.error("Command execution was interrupted ", e);
         Thread.currentThread().interrupt();
         throw (IOException) new InterruptedIOException(
             "Command " + processForDebug(request) + " was interrupted.")
             .initCause(e);
+      } finally {
+        span.end();
       }
     }
 

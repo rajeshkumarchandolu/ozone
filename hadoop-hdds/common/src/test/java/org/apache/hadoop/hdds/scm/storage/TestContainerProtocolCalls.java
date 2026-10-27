@@ -20,16 +20,24 @@ package org.apache.hadoop.hdds.scm.storage;
 import static org.apache.hadoop.hdds.protocol.MockDatanodeDetails.randomDatanodeDetails;
 import static org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationFactor.THREE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.sdk.trace.ReadableSpan;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.apache.hadoop.hdds.HDDSVersion;
 import org.apache.hadoop.hdds.client.BlockID;
 import org.apache.hadoop.hdds.client.RatisReplicationConfig;
@@ -44,8 +52,11 @@ import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.Result;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.Type;
 import org.apache.hadoop.hdds.scm.XceiverClientReply;
 import org.apache.hadoop.hdds.scm.XceiverClientSpi;
+import org.apache.hadoop.hdds.scm.container.common.helpers.StorageContainerException;
 import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.pipeline.PipelineID;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
 import org.apache.hadoop.ozone.common.Checksum;
 import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
 import org.junit.jupiter.api.Test;
@@ -58,6 +69,7 @@ import org.mockito.ArgumentCaptor;
 public class TestContainerProtocolCalls {
 
   private static final int VERSION = HDDSVersion.ZDU.serialize();
+  private static final AttributeKey<String> DATANODE = AttributeKey.stringKey(SpanAttributeKeys.DATANODE);
 
   private static Pipeline pipelineWithVersion(int version) {
     List<DatanodeDetails> nodes = Arrays.asList(
@@ -167,6 +179,56 @@ public class TestContainerProtocolCalls {
         ContainerProtocolCalls.getPutBlockRequest(pipeline, blockData, true, null);
 
     assertEquals(Integer.MAX_VALUE, request.getWritePipelineVersion());
+  }
+
+  @Test
+  void tryEachDatanodeRecordsEachAttemptInItsOwnSpan() throws IOException {
+    Pipeline pipeline = pipelineWithVersion(VERSION);
+    List<DatanodeDetails> tried = new ArrayList<>();
+    List<String> currentSpanIds = new ArrayList<>();
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      String result = ContainerProtocolCalls.tryEachDatanode("Client.test", pipeline, d -> {
+        tried.add(d);
+        currentSpanIds.add(Span.current().getSpanContext().getSpanId());
+        if (tried.size() == 1) {
+          throw new IOException("first datanode failed");
+        }
+        return "ok";
+      }, d -> "failed on " + d);
+
+      assertEquals("ok", result);
+      List<SpanData> spans = spansNamed(collector, "Client.test");
+      assertEquals(2, spans.size());
+      assertEquals(StatusCode.ERROR, spans.get(0).getStatus().getStatusCode());
+      assertEquals(StatusCode.UNSET, spans.get(1).getStatus().getStatusCode());
+      for (int i = 0; i < spans.size(); i++) {
+        assertEquals(currentSpanIds.get(i), spans.get(i).getSpanId());
+        assertEquals(tried.get(i).toString(), spans.get(i).getAttributes().get(DATANODE));
+      }
+    }
+  }
+
+  @Test
+  void tryEachDatanodeStopsOnBlockTokenFailure() {
+    Pipeline pipeline = pipelineWithVersion(VERSION);
+    List<DatanodeDetails> tried = new ArrayList<>();
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      assertThrows(StorageContainerException.class,
+          () -> ContainerProtocolCalls.tryEachDatanode("Client.test", pipeline, d -> {
+            tried.add(d);
+            throw new StorageContainerException("token expired", Result.BLOCK_TOKEN_VERIFICATION_FAILED);
+          }, d -> "failed on " + d));
+
+      assertEquals(1, tried.size());
+      List<SpanData> spans = spansNamed(collector, "Client.test");
+      assertEquals(1, spans.size());
+      assertEquals(StatusCode.ERROR, spans.get(0).getStatus().getStatusCode());
+      assertEquals(tried.get(0).toString(), spans.get(0).getAttributes().get(DATANODE));
+    }
+  }
+
+  private static List<SpanData> spansNamed(TestSpanCollector collector, String name) {
+    return collector.named(name).stream().map(ReadableSpan::toSpanData).collect(Collectors.toList());
   }
 
   private static ContainerCommandResponseProto response(Type type) {

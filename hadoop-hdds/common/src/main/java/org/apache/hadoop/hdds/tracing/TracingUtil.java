@@ -364,10 +364,18 @@ public final class TracingUtil {
 
     W3CTraceContextPropagator propagator = W3CTraceContextPropagator.getInstance();
     Context extract = propagator.extract(Context.current(), encodedParent, new TextExtractor());
+    if (!isValidParent(extract)) {
+      return importAndCreateSpan(name, null, spanKind);
+    }
     return tracer.spanBuilder(name)
         .setParent(extract)
         .setSpanKind(spanKind)
         .startSpan();
+  }
+
+  /** @return true if {@code context} holds a valid span that a new span can use as its parent. */
+  private static boolean isValidParent(Context context) {
+    return Span.fromContext(context).getSpanContext().isValid();
   }
 
   /**
@@ -497,9 +505,8 @@ public final class TracingUtil {
       CheckedSupplier<R, E> supplier) throws E {
     try (Scope ignored = span.makeCurrent()) {
       return supplier.get();
-    } catch (Exception ex) {
-      span.addEvent("Failed with exception: " + ex.getMessage());
-      span.setStatus(StatusCode.ERROR);
+    } catch (Throwable ex) {
+      recordException(span, ex);
       throw ex;
     } finally {
       span.end();
@@ -513,9 +520,8 @@ public final class TracingUtil {
       CheckedRunnable<E> runnable) throws E {
     try (Scope ignored = span.makeCurrent()) {
       runnable.run();
-    } catch (Exception ex) {
-      span.addEvent("Failed with exception: " + ex.getMessage());
-      span.setStatus(StatusCode.ERROR);
+    } catch (Throwable ex) {
+      recordException(span, ex);
       throw ex;
     } finally {
       span.end();
@@ -681,7 +687,8 @@ public final class TracingUtil {
       }
       String[] parts = carrier.split(";");
       for (String part : parts) {
-        String[] kv = part.split("=");
+        // limit 2: tracestate values contain '='
+        String[] kv = part.split("=", 2);
         if (kv.length == 2) {
           map.put(kv[0].trim(), kv[1].trim());
         }

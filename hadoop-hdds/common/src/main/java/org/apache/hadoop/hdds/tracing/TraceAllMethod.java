@@ -86,12 +86,10 @@ public class TraceAllMethod<T> implements InvocationHandler {
         name + "." + method.getName(), spanKind)) {
       try {
         return delegateMethod.invoke(delegate, args);
-      } catch (Exception ex) {
-        if (ex.getCause() != null) {
-          throw ex.getCause();
-        } else {
-          throw ex;
-        }
+      } catch (Throwable ex) {
+        Throwable thrown = ex.getCause() != null ? ex.getCause() : ex;
+        TracingUtil.recordExceptionInCurrentSpan(thrown);
+        throw thrown;
       }
     }
   }

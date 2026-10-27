@@ -20,10 +20,14 @@ package org.apache.hadoop.hdds.tracing;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.trace.ReadableSpan;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import java.io.IOException;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -48,6 +52,28 @@ public class TestTraceAllMethod {
         ServiceImpl.class.getMethod("defaultMethod"), new Object[]{}));
   }
 
+  @Test
+  public void testTracedMethodExceptionMarksSpanError() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      TraceAllMethod<Service> subject = new TraceAllMethod<>(new ServiceImpl(), "service");
+
+      IOException thrown = assertThrows(IOException.class,
+          () -> subject.invoke(null, ServiceImpl.class.getMethod("failingMethod"), new Object[]{}));
+      assertEquals("traced failure", thrown.getMessage());
+
+      List<ReadableSpan> spans = collector.named("service.failingMethod");
+      assertEquals(1, spans.size(), () -> "spans: " + collector.getSpans());
+      SpanData data = spans.get(0).toSpanData();
+      assertEquals(SpanKind.CLIENT, data.getKind());
+      assertEquals(StatusCode.ERROR, data.getStatus().getStatusCode());
+      assertEquals("traced failure", data.getStatus().getDescription());
+      assertEquals(1, data.getEvents().size());
+      assertEquals("exception", data.getEvents().get(0).getName());
+      assertEquals(IOException.class.getName(),
+          data.getEvents().get(0).getAttributes().get(AttributeKey.stringKey("exception.type")));
+    }
+  }
+
   /**
    * Example interface for testing {@link TraceAllMethod}.
    */
@@ -61,6 +87,8 @@ public class TestTraceAllMethod {
     String skippedMethod();
 
     void throwingMethod() throws IOException;
+
+    void failingMethod() throws IOException;
 
     String normalMethod();
 
@@ -96,6 +124,11 @@ public class TestTraceAllMethod {
     public void throwingMethod() throws IOException {
       this.spanActive = Span.current().getSpanContext().isValid();
       throw new IOException("Original Exception");
+    }
+
+    @Override
+    public void failingMethod() throws IOException {
+      throw new IOException("traced failure");
     }
 
     @Override

@@ -132,6 +132,20 @@ public class TestTracingInitModes {
     }
   }
 
+  /** app-aware + malformed parent on the wire: treated as no parent, so no root span. */
+  @Test
+  public void testApplicationAwareMalformedParentDoesNotStartRoot() {
+    installNoExportGlobalOpenTelemetry();
+    MutableConfigurationSource conf = config(false, true);
+    TracingUtil.initTracing("app-aware-malformed", conf);
+
+    for (String parent : new String[] {"garbage", "traceparent=not-a-traceparent;"}) {
+      Span child = TracingUtil.importAndCreateSpan("child", parent);
+      assertFalse(child.getSpanContext().isValid(), "malformed parent must not start a root span: " + parent);
+      child.end();
+    }
+  }
+
   /** app-aware + GlobalOpenTelemetry set: still no root span without a parent. */
   @Test
   public void testApplicationAwareAdoptsGlobalTracer() {

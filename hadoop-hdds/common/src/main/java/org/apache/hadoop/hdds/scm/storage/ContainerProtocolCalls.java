@@ -21,6 +21,7 @@ import static java.util.Collections.singletonList;
 import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.Result.BLOCK_TOKEN_VERIFICATION_FAILED;
 
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -70,6 +71,7 @@ import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerNotOpenExcep
 import org.apache.hadoop.hdds.scm.container.common.helpers.StorageContainerException;
 import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.security.token.OzoneBlockTokenIdentifier;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
 import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.common.Checksum;
 import org.apache.hadoop.ozone.common.ChecksumData;
@@ -143,7 +145,11 @@ public final class ContainerProtocolCalls  {
     return response.getListBlock();
   }
 
-  static <T> T tryEachDatanode(Pipeline pipeline,
+  /**
+   * Runs {@code op} on the closest datanode not tried yet, until one succeeds.
+   * Each attempt gets its own span {@code spanName}, so a failed attempt is ERROR without marking the caller's span.
+   */
+  static <T> T tryEachDatanode(String spanName, Pipeline pipeline,
       CheckedFunction<DatanodeDetails, T, IOException> op,
       Function<DatanodeDetails, String> toErrorMessage)
       throws IOException {
@@ -151,20 +157,20 @@ public final class ContainerProtocolCalls  {
     for (; ;) {
       final DatanodeDetails d = pipeline.getClosestNode(excluded);
 
-      try {
+      Span span = TracingUtil.createSpan(spanName);
+      try (Scope ignored = span.makeCurrent()) {
+        span.setAttribute(SpanAttributeKeys.DATANODE, d.toString());
         return op.apply(d);
       } catch (IOException e) {
-        Span span = TracingUtil.getActiveSpan();
+        TracingUtil.recordException(span, e);
         if (e instanceof StorageContainerException) {
           StorageContainerException sce = (StorageContainerException)e;
           // Block token expired. There's no point retrying other DN.
           // Throw the exception to request a new block token right away.
           if (sce.getResult() == BLOCK_TOKEN_VERIFICATION_FAILED) {
-            span.addEvent("block token verification failed at DN " + d);
             throw e;
           }
         }
-        span.addEvent("failed to connect to DN " + d);
         excluded.add(d);
         if (excluded.size() < pipeline.size()) {
           LOG.warn(toErrorMessage.apply(d)
@@ -172,6 +178,8 @@ public final class ContainerProtocolCalls  {
         } else {
           throw e;
         }
+      } finally {
+        span.end();
       }
     }
   }
@@ -197,7 +205,7 @@ public final class ContainerProtocolCalls  {
       builder.setEncodedToken(token.encodeToUrlString());
     }
 
-    return tryEachDatanode(xceiverClient.getPipeline(),
+    return tryEachDatanode("Client.getBlock", xceiverClient.getPipeline(),
         d -> getBlock(xceiverClient, validators, builder, blockID, d, pipeline),
         d -> toErrorMessage(blockID, d));
   }
@@ -433,7 +441,7 @@ public final class ContainerProtocolCalls  {
       span.setAttribute("offset", chunk.getOffset())
           .setAttribute("length", chunk.getLen())
           .setAttribute("block", blockID.toString());
-      return tryEachDatanode(xceiverClient.getPipeline(),
+      return tryEachDatanode("Client.readChunk", xceiverClient.getPipeline(),
           d -> readChunk(xceiverClient, chunk, blockID,
               validators, builder, d),
           d -> toErrorMessage(chunk, blockID, d));
@@ -970,6 +978,10 @@ public final class ContainerProtocolCalls  {
             .setContainerID(blockID.getContainerID());
     if (token != null) {
       builder.setEncodedToken(token.encodeToUrlString());
+    }
+    String traceId = TracingUtil.exportCurrentSpan();
+    if (traceId != null) {
+      builder.setTraceID(traceId);
     }
 
     return builder.setDatanodeUuid(datanode.getUuidString())
