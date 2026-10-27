@@ -45,11 +45,18 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
+import org.apache.hadoop.hdds.tracing.TracingUtil.TraceCloseable;
 import org.apache.hadoop.ipc_.Server;
+import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.AuditLogger;
+import org.apache.hadoop.ozone.audit.OMAction;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes;
 import org.apache.hadoop.ozone.om.helpers.BucketLayout;
@@ -970,5 +977,26 @@ public class TestOMMetadataReader {
 
     verify(keyManager).listStatus(any(OmKeyArgs.class), eq(false), eq(""), anyLong(), any(), eq(false));
     verify(keyManager).listStatus(any(OmKeyArgs.class), eq(false), eq(""), anyLong(), any(), eq(false), eq(false));
+  }
+
+  @Test
+  public void testReadAuditAllowListCopiedToSpan() throws Exception {
+    OmMetadataReader reader = createMetadataReader(createMockIAccessAuthorizerReturningTrue());
+    Map<String, String> auditMap = new HashMap<>();
+    auditMap.put(OzoneConsts.VOLUME, "vol1");
+    auditMap.put(OzoneConsts.BUCKET, "bucket1");
+    auditMap.put(OzoneConsts.KEY, "key1");
+    auditMap.put(OzoneConsts.OWNER, "user1");
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        reader.buildAuditMessageForSuccess(OMAction.READ_KEY, auditMap);
+      }
+
+      collector.assertAttribute("test", OzoneConsts.VOLUME, "vol1");
+      collector.assertAttribute("test", OzoneConsts.BUCKET, "bucket1");
+      collector.assertAttribute("test", OzoneConsts.KEY, "key1");
+      collector.assertNoAttribute("test", OzoneConsts.OWNER);
+    }
   }
 }

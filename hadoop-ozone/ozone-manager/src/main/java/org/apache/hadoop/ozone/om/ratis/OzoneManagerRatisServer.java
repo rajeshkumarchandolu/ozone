@@ -594,6 +594,8 @@ public final class OzoneManagerRatisServer {
       StateMachineException stateMachineException =
           reply.getStateMachineException();
       if (stateMachineException != null) {
+        TracingUtil.recordExceptionInCurrentSpan(
+            stateMachineException.getCause() != null ? stateMachineException.getCause() : stateMachineException);
         OMResponse.Builder omResponse = OMResponse.newBuilder()
             .setCmdType(omRequest.getCmdType())
             .setSuccess(false)

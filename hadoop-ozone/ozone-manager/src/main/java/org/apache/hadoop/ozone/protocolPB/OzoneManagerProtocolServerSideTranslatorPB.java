@@ -30,6 +30,8 @@ import com.google.protobuf.ServiceException;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hdds.server.OzoneProtocolMessageDispatcher;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.ProtocolMessageMetrics;
 import org.apache.hadoop.ipc_.ProcessingDetails.Timing;
 import org.apache.hadoop.ipc_.Server;
@@ -115,6 +117,15 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements OzoneManagerP
   @Override
   public OMResponse submitRequest(RpcController controller,
       OMRequest request) throws ServiceException {
+    return dispatcher.processRequest(request, req -> {
+      addRequestAttributesToCurrentSpan(req);
+      OMResponse response = validateAndProcessRequest(req);
+      addResponseAttributesToCurrentSpan(response);
+      return response;
+    }, request.getCmdType(), request.getTraceID());
+  }
+
+  private OMResponse validateAndProcessRequest(OMRequest request) throws ServiceException {
     OMRequest validatedRequest;
     try {
       validatedRequest = captureLatencyNs(
@@ -122,18 +133,47 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements OzoneManagerP
           () -> requestValidations.validateRequest(request));
     } catch (Exception e) {
       if (e instanceof OMException) {
+        TracingUtil.recordExceptionInCurrentSpan(e);
         return createErrorResponse(request, (OMException) e);
       }
       throw new ServiceException(e);
     }
 
-    OMResponse response = dispatcher.processRequest(validatedRequest,
-        this::processRequest, request.getCmdType(), request.getTraceID());
+    OMResponse response = processRequest(validatedRequest);
 
     logLargeResponseIfNeeded(response);
 
     return captureLatencyNs(perfMetrics.getValidateResponseLatencyNs(),
         () -> requestValidations.validateResponse(request, response));
+  }
+
+  private static void addRequestAttributesToCurrentSpan(OMRequest request) {
+    TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_CMD_TYPE, request.getCmdType().name());
+    if (!request.getClientId().isEmpty()) {
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_CLIENT_ID, request.getClientId());
+    }
+    int callId = Server.getCallId();
+    if (callId >= 0) {
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_CALL_ID, callId);
+    }
+  }
+
+  /**
+   * Marks the current span ERROR when the status is not OK, which is when the client throws.
+   * OK without success is a no-op (for example an ACL that is already set) and only records {@code om.success}.
+   */
+  private static void addResponseAttributesToCurrentSpan(OMResponse response) {
+    if (response.getStatus() != OzoneManagerProtocolProtos.Status.OK) {
+      TracingUtil.markCurrentSpanError(response.getStatus().name(), response.getMessage());
+    } else if (!response.getSuccess()) {
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_SUCCESS, false);
+    }
+    if (response.hasOmLockDetails()) {
+      OzoneManagerProtocolProtos.OMLockDetailsProto lockDetails = response.getOmLockDetails();
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_LOCK_WAIT_NS, lockDetails.getWaitLockNanos());
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_LOCK_READ_NS, lockDetails.getReadLockNanos());
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_LOCK_WRITE_NS, lockDetails.getWriteLockNanos());
+    }
   }
 
   @VisibleForTesting
@@ -193,6 +233,7 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements OzoneManagerP
                 .clearDerivedKeyPiggyBacking()).build();
           }
         } catch (IOException ex) {
+          TracingUtil.recordExceptionInCurrentSpan(ex);
           return createErrorResponse(request, ex);
         }
       }

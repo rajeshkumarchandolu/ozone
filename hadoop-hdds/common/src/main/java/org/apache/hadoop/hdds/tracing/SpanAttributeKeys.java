@@ -38,6 +38,33 @@ public final class SpanAttributeKeys {
   /** Prefix of a CLI option attribute, followed by the option's longest name, for example {@code cli.option.--type}. */
   public static final String CLI_OPTION_PREFIX = "cli.option.";
 
+  /** {@code OMRequest.Type} of an OM request, for example {@code CreateKey}. */
+  public static final String OM_CMD_TYPE = "om.cmd_type";
+
+  /** Client ID sent with an OM request. */
+  public static final String OM_CLIENT_ID = "om.client_id";
+
+  /** Hadoop RPC call ID of an OM request. */
+  public static final String OM_CALL_ID = "om.call_id";
+
+  /** {@code false} when OM returned status OK without success, for example a no-op ACL or owner change. */
+  public static final String OM_SUCCESS = "om.success";
+
+  /** Time an OM request waited for its locks, in nanoseconds. */
+  public static final String OM_LOCK_WAIT_NS = "om.lock.wait_ns";
+
+  /** Time an OM request held read locks, in nanoseconds. */
+  public static final String OM_LOCK_READ_NS = "om.lock.read_ns";
+
+  /** Time an OM request held write locks, in nanoseconds. */
+  public static final String OM_LOCK_WRITE_NS = "om.lock.write_ns";
+
+  /** Simple class name of the {@code OMClientRequest} that handles an OM write request. */
+  public static final String OM_REQUEST_CLASS = "om.request_class";
+
+  /** Bucket layout resolved for an OM key request, for example {@code FILE_SYSTEM_OPTIMIZED}. */
+  public static final String OM_BUCKET_LAYOUT = "om.bucket_layout";
+
   private SpanAttributeKeys() {
   }
 }
