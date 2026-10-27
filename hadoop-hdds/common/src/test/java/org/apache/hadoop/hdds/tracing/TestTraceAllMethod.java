@@ -17,6 +17,7 @@
 
 package org.apache.hadoop.hdds.tracing;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -74,6 +75,25 @@ public class TestTraceAllMethod {
     }
   }
 
+  @Test
+  public void testGetterNotTraced() throws Throwable {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      TraceAllMethod<Service> subject = new TraceAllMethod<>(new ServiceImpl(), "service");
+
+      assertEquals("service", subject.invoke(null, ServiceImpl.class.getMethod("getName"), new Object[]{}));
+      assertEquals(true, subject.invoke(null, ServiceImpl.class.getMethod("isReady"), new Object[]{}));
+      assertEquals("Hello world",
+          subject.invoke(null, ServiceImpl.class.getMethod("getGreeting", String.class), new Object[]{"world"}));
+      assertEquals("normal", subject.invoke(null, ServiceImpl.class.getMethod("normalMethod"), new Object[]{}));
+
+      assertThat(collector.named("service.getName")).isEmpty();
+      assertThat(collector.named("service.isReady")).isEmpty();
+      // A get method with parameters is not a getter.
+      assertEquals(1, collector.named("service.getGreeting").size(), () -> "spans: " + collector.getSpans());
+      assertEquals(1, collector.named("service.normalMethod").size(), () -> "spans: " + collector.getSpans());
+    }
+  }
+
   /**
    * Example interface for testing {@link TraceAllMethod}.
    */
@@ -93,6 +113,12 @@ public class TestTraceAllMethod {
     String normalMethod();
 
     String otherMethod(String name);
+
+    String getName();
+
+    boolean isReady();
+
+    String getGreeting(String name);
   }
 
   /**
@@ -129,6 +155,21 @@ public class TestTraceAllMethod {
     @Override
     public void failingMethod() throws IOException {
       throw new IOException("traced failure");
+    }
+
+    @Override
+    public String getName() {
+      return "service";
+    }
+
+    @Override
+    public boolean isReady() {
+      return true;
+    }
+
+    @Override
+    public String getGreeting(String name) {
+      return otherMethod(name);
     }
 
     @Override

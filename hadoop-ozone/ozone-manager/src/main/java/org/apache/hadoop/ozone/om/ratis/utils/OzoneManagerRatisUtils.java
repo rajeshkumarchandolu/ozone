@@ -34,6 +34,8 @@ import org.apache.hadoop.hdds.protocol.proto.HddsProtos.NodeType;
 import org.apache.hadoop.hdds.security.SecurityConfig;
 import org.apache.hadoop.hdds.security.x509.certificate.client.CertificateClient;
 import org.apache.hadoop.hdds.server.ServerUtils;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.HAUtils;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.ozone.om.OMConfigKeys;
@@ -44,6 +46,7 @@ import org.apache.hadoop.ozone.om.exceptions.OMLeaderNotReadyException;
 import org.apache.hadoop.ozone.om.exceptions.OMNotLeaderException;
 import org.apache.hadoop.ozone.om.helpers.BucketLayout;
 import org.apache.hadoop.ozone.om.request.BucketLayoutAwareOMKeyRequestFactory;
+import org.apache.hadoop.ozone.om.request.IOMClientRequest;
 import org.apache.hadoop.ozone.om.request.OMClientRequest;
 import org.apache.hadoop.ozone.om.request.bucket.OMBucketCreateRequest;
 import org.apache.hadoop.ozone.om.request.bucket.OMBucketDeleteRequest;
@@ -132,12 +135,22 @@ public final class OzoneManagerRatisUtils {
 
   /**
    * Create OMClientRequest which encapsulates the OMRequest.
+   * When tracing is enabled or application-aware, the request is wrapped in a tracing proxy, so every
+   * {@link IOMClientRequest} call (preExecute, validateAndUpdateCache, ...) made while the current span is recording
+   * gets an {@code OM.<method>} span.
    * @param omRequest
-   * @return OMClientRequest
+   * @return OMClientRequest, or its tracing proxy
    * @throws IOException
    */
+  public static IOMClientRequest createClientRequest(OMRequest omRequest, OzoneManager ozoneManager)
+      throws IOException {
+    OMClientRequest request = createClientRequestImpl(omRequest, ozoneManager);
+    TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_REQUEST_CLASS, request.getClass().getSimpleName());
+    return TracingUtil.createProxy(request, IOMClientRequest.class, "OM");
+  }
+
   @SuppressWarnings("checkstyle:methodlength")
-  public static OMClientRequest createClientRequest(OMRequest omRequest,
+  private static OMClientRequest createClientRequestImpl(OMRequest omRequest,
       OzoneManager ozoneManager) throws IOException {
 
     // Handling of exception by createClientRequest(OMRequest, OzoneManger):
@@ -442,10 +455,18 @@ public final class OzoneManagerRatisUtils {
 
   /**
    * Convert exception result to {@link org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.Status}.
+   * Also records the exception and the status on the current span.
    * @param exception
    * @return Status
    */
   public static Status exceptionToResponseStatus(Exception exception) {
+    Status status = toResponseStatus(exception);
+    TracingUtil.recordExceptionInCurrentSpan(exception);
+    TracingUtil.markCurrentSpanError(status.name(), exception.getMessage());
+    return status;
+  }
+
+  private static Status toResponseStatus(Exception exception) {
     if (exception instanceof OMException) {
       return Status.values()[((OMException) exception).getResult().ordinal()];
     } else if (exception instanceof InvalidPathException) {

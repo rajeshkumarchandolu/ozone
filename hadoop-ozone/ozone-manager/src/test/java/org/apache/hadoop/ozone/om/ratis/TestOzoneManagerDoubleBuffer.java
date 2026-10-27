@@ -45,6 +45,10 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
+import org.apache.hadoop.hdds.tracing.TracingUtil.TraceCloseable;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.ozone.audit.AuditLogger;
 import org.apache.hadoop.ozone.audit.AuditMessage;
@@ -479,6 +483,39 @@ class TestOzoneManagerDoubleBuffer {
     assertTrue(tasks.get(3).get());
     assertEquals(0, fn.notifyFlush());
 
+  }
+
+  @Test
+  public void testFlushSpansUseFixedNames() throws Exception {
+    // Replace the started buffer with one that has tracing on and no daemon, so the flush runs on this thread.
+    doubleBuffer.stop();
+    doubleBuffer = OzoneManagerDoubleBuffer.newBuilder()
+        .setOmMetadataManager(ozoneManager.getMetadataManager())
+        .setS3SecretManager(secretManager)
+        .setMaxUnFlushedTransactionCount(1000)
+        .enableTracing(true)
+        .build();
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      String traceId;
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        traceId = TracingUtil.exportCurrentSpan();
+      }
+      OMClientResponse response = mock(OMClientResponse.class);
+      when(response.getOMResponse()).thenReturn(OMResponse.newBuilder()
+          .setCmdType(OzoneManagerProtocolProtos.Type.CreateKey)
+          .setStatus(OzoneManagerProtocolProtos.Status.OK)
+          .setTraceID(traceId)
+          .build());
+
+      doubleBuffer.add(response, TransactionInfo.getTermIndex(1));
+      doubleBuffer.flushCurrentBuffer();
+
+      collector.assertParent("DB-addToWriteBatch-CreateKey", "test");
+      collector.assertParent("DB-addWriteBatch-transactioninfo", "test");
+      collector.assertParent("DB-commitWriteBatch", "test");
+      collector.assertAttribute("DB-commitWriteBatch", SpanAttributeKeys.OM_BATCH_SIZE, 1L);
+    }
   }
 
   private static Future<Boolean> waitFN(OzoneManagerDoubleBuffer.FlushNotifier fn) {

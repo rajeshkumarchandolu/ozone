@@ -26,6 +26,7 @@ import static org.apache.hadoop.ozone.util.MetricUtil.captureLatencyNs;
 import java.io.IOException;
 import java.nio.file.InvalidPathException;
 import java.util.Map;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.db.cache.CacheKey;
 import org.apache.hadoop.hdds.utils.db.cache.CacheValue;
 import org.apache.hadoop.ozone.OzoneConsts;
@@ -219,6 +220,9 @@ public class OMKeyDeleteRequestWithFSO extends OMKeyDeleteRequest {
     if (keyStatus.isFile()) {
       auditMap.put(OzoneConsts.DATA_SIZE, String.valueOf(omKeyInfo.getDataSize()));
       auditMap.put(OzoneConsts.REPLICATION_CONFIG, omKeyInfo.getReplicationConfig().toString());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.DATA_SIZE, omKeyInfo.getDataSize());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.REPLICATION_CONFIG,
+          auditMap.get(OzoneConsts.REPLICATION_CONFIG));
     }
 
     return new PreparedKeyDelete(keyStatus.isDirectory(), omKeyInfo, volumeId, ozonePathKey,

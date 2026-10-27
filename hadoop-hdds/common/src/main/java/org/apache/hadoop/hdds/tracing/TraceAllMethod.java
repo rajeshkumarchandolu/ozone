@@ -50,10 +50,18 @@ public class TraceAllMethod<T> implements InvocationHandler {
       if (method.getDeclaringClass().equals(Object.class)) {
         continue;
       }
-      boolean shouldSkip = method.isAnnotationPresent(SkipTracing.class);
+      boolean shouldSkip = method.isAnnotationPresent(SkipTracing.class) || isGetter(method);
       methods.computeIfAbsent(method.getName(), any -> new HashMap<>())
           .put(method.getParameterTypes(), new DelegatedMethodInfo(shouldSkip, method));
     }
+  }
+
+  /**
+   * Getters are not traced: methods without parameters whose name starts with {@code get} or {@code is}.
+   */
+  private static boolean isGetter(Method method) {
+    String methodName = method.getName();
+    return method.getParameterCount() == 0 && (methodName.startsWith("get") || methodName.startsWith("is"));
   }
 
   @Override

@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import org.apache.hadoop.hdds.client.DefaultReplicationConfig;
 import org.apache.hadoop.hdds.protocol.StorageType;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.Auditable;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.BucketArgs;
@@ -185,7 +186,9 @@ public final class OmBucketArgs extends WithMetadata implements Auditable {
   public Map<String, String> toAuditMap() {
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, this.volumeName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, this.volumeName);
     auditMap.put(OzoneConsts.BUCKET, this.bucketName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, this.bucketName);
     auditMap.put(OzoneConsts.GDPR_FLAG,
         getMetadata().get(OzoneConsts.GDPR_FLAG));
     auditMap.put(OzoneConsts.IS_VERSION_ENABLED,
@@ -216,6 +219,8 @@ public final class OmBucketArgs extends WithMetadata implements Auditable {
       auditMap.put(OzoneConsts.REPLICATION_CONFIG,
           this.defaultReplicationConfig.getReplicationConfig()
               .getReplication());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.REPLICATION_CONFIG,
+          auditMap.get(OzoneConsts.REPLICATION_CONFIG));
     }
     return auditMap;
   }

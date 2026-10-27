@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -519,6 +520,47 @@ public class TestTracingUtil {
       assertEquals(TRACE_ID, data.getTraceId());
       assertEquals(PARENT_SPAN_ID, data.getParentSpanId());
       assertEquals("t61r", data.getSpanContext().getTraceState().get("congo"));
+    }
+  }
+
+  @Test
+  public void testPrefixedProxyReturnsDelegateWhenTracingOff() {
+    TracingUtil.shutdownTracing();
+    ServiceImpl delegate = new ServiceImpl();
+    assertSame(delegate, createProxy(delegate, Service.class, "test"));
+  }
+
+  @Test
+  public void testPrefixedProxyCreatesRootSpanWithoutParent() {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      Service proxy = createProxy(new ServiceImpl(), Service.class, "test");
+      assertEquals("normal", proxy.normalMethod());
+
+      assertFalse(finishedSpan(collector, "test.normalMethod").getParentSpanContext().isValid());
+    }
+  }
+
+  @Test
+  public void testPrefixedProxyCreatesChildSpans() throws IOException {
+    try (TestSpanCollector collector = TestSpanCollector.install("test")) {
+      ServiceImpl delegate = new ServiceImpl();
+      Span parent = TracingUtil.createSpan("parent");
+      try (Scope ignored = parent.makeCurrent()) {
+        Service proxy = createProxy(delegate, Service.class, "test");
+        assertNotSame(delegate, proxy);
+        assertEquals("normal", proxy.normalMethod());
+        assertEquals("skipped", proxy.skippedMethod());
+        assertThrows(IOException.class, proxy::failingMethod);
+      } finally {
+        parent.end();
+      }
+
+      collector.assertParent("test.normalMethod", "parent");
+      collector.assertNotError("test.normalMethod");
+      assertTrue(collector.named("test.skippedMethod").isEmpty());
+      collector.assertParent("test.failingMethod", "parent");
+      collector.assertError("test.failingMethod", "traced failure");
+      collector.assertExceptionRecorded("test.failingMethod", IOException.class);
     }
   }
 

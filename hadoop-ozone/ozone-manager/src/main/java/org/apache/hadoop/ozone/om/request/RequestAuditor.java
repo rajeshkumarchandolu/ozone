@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.hadoop.hdds.client.ECReplicationConfig;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.AuditAction;
 import org.apache.hadoop.ozone.om.helpers.OMAuditLogger;
@@ -64,6 +65,9 @@ public interface RequestAuditor {
       auditMap.put(OzoneConsts.VOLUME, keyArgs.getVolumeName());
       auditMap.put(OzoneConsts.BUCKET, keyArgs.getBucketName());
       auditMap.put(OzoneConsts.KEY, keyArgs.getKeyName());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, keyArgs.getVolumeName());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, keyArgs.getBucketName());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.KEY, keyArgs.getKeyName());
       return auditMap;
     }
   }
@@ -79,6 +83,7 @@ public interface RequestAuditor {
       Map< String, String > auditMap = buildLightKeyArgsAuditMap(keyArgs);
       auditMap.put(OzoneConsts.DATA_SIZE,
           String.valueOf(keyArgs.getDataSize()));
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.DATA_SIZE, keyArgs.getDataSize());
       if (keyArgs.hasType()) {
         auditMap.put(OzoneConsts.REPLICATION_TYPE, keyArgs.getType().name());
       }
@@ -88,6 +93,8 @@ public interface RequestAuditor {
       if (keyArgs.hasEcReplicationConfig()) {
         auditMap.put(OzoneConsts.REPLICATION_CONFIG,
             ECReplicationConfig.toString(keyArgs.getEcReplicationConfig()));
+        TracingUtil.addAttributesToCurrentSpan(OzoneConsts.REPLICATION_CONFIG,
+            auditMap.get(OzoneConsts.REPLICATION_CONFIG));
       }
       if (keyArgs.hasExpectedDataGeneration()) {
         auditMap.put(OzoneConsts.REWRITE_GENERATION,

@@ -24,6 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -35,24 +37,34 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.scm.protocol.ScmBlockLocationProtocol;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
+import org.apache.hadoop.hdds.tracing.TracingUtil.TraceCloseable;
 import org.apache.hadoop.hdds.utils.ProtocolMessageMetrics;
 import org.apache.hadoop.hdds.utils.db.cache.CacheKey;
 import org.apache.hadoop.hdds.utils.db.cache.CacheValue;
 import org.apache.hadoop.ozone.om.OMConfigKeys;
 import org.apache.hadoop.ozone.om.OMMetadataManager;
+import org.apache.hadoop.ozone.om.OMPerformanceMetrics;
 import org.apache.hadoop.ozone.om.OmConfig;
 import org.apache.hadoop.ozone.om.OmMetadataManagerImpl;
 import org.apache.hadoop.ozone.om.OzoneManager;
+import org.apache.hadoop.ozone.om.ScmClient;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.execution.OMExecutionFlow;
+import org.apache.hadoop.ozone.om.execution.flowcontrol.ExecutionContext;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.ratis.utils.OzoneManagerRatisUtils;
+import org.apache.hadoop.ozone.om.request.IOMClientRequest;
 import org.apache.hadoop.ozone.om.request.OMRequestTestUtils;
 import org.apache.hadoop.ozone.om.request.upgrade.OMCompleteFinalizeUpgradeRequest;
 import org.apache.hadoop.ozone.om.request.upgrade.OMStartFinalizeUpgradeRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos;
 import org.apache.hadoop.ozone.protocolPB.OzoneManagerProtocolServerSideTranslatorPB;
 import org.apache.hadoop.ozone.security.acl.IAccessAuthorizer;
+import org.apache.hadoop.ozone.util.ConcurrentMutableRate;
 import org.apache.ratis.protocol.ClientId;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -193,6 +205,66 @@ public class TestOzoneManagerRatisRequest {
     assertEquals(PERMISSION_DENIED, response.getStatus());
     assertThat(response.getMessage()).contains(cmdType + " requests are not accepted from clients");
     verify(ozoneManager, never()).getOmRatisServer();
+  }
+
+  @Test
+  public void testPreExecuteSpanIsChildOfRequestSpan() throws ServiceException {
+    ozoneManager = mock(OzoneManager.class);
+    OMPerformanceMetrics perfMetrics = mock(OMPerformanceMetrics.class);
+    when(perfMetrics.getPreExecuteLatencyNs()).thenReturn(mock(ConcurrentMutableRate.class));
+    when(ozoneManager.getPerfMetrics()).thenReturn(perfMetrics);
+    // OMStartFinalizeUpgradeRequest.preExecute asks SCM to finalize first.
+    ScmClient scmClient = mock(ScmClient.class);
+    when(scmClient.getBlockClient()).thenReturn(mock(ScmBlockLocationProtocol.class));
+    when(ozoneManager.getScmClient()).thenReturn(scmClient);
+    OzoneManagerRatisServer ratisServer = mock(OzoneManagerRatisServer.class);
+    when(ratisServer.submitRequest(any(OzoneManagerProtocolProtos.OMRequest.class), eq(true)))
+        .thenReturn(OzoneManagerProtocolProtos.OMResponse.newBuilder()
+            .setCmdType(OzoneManagerProtocolProtos.Type.StartFinalizeUpgrade)
+            .setStatus(OzoneManagerProtocolProtos.Status.OK)
+            .setSuccess(true)
+            .build());
+    when(ozoneManager.getOmRatisServer()).thenReturn(ratisServer);
+    OzoneManagerProtocolProtos.OMRequest omRequest = OzoneManagerProtocolProtos.OMRequest.newBuilder()
+        .setCmdType(OzoneManagerProtocolProtos.Type.StartFinalizeUpgrade)
+        .setClientId("test-client-id")
+        .build();
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        assertThat(new OMExecutionFlow(ozoneManager).submit(omRequest, true).getSuccess()).isTrue();
+      }
+      collector.assertParent("OM.preExecute", "test");
+      collector.assertNotError("OM.preExecute");
+      collector.assertAttribute("test", SpanAttributeKeys.OM_REQUEST_CLASS, "OMStartFinalizeUpgradeRequest");
+    }
+  }
+
+  @Test
+  public void testValidateAndUpdateCacheFailureMarksProxySpanError() throws IOException {
+    OzoneManagerProtocolProtos.OMRequest omRequest = OzoneManagerProtocolProtos.OMRequest.newBuilder()
+        .setCmdType(OzoneManagerProtocolProtos.Type.StartFinalizeUpgrade)
+        .setClientId("test-client-id")
+        .build();
+    // The mocked OM has no version manager, so validateAndUpdateCache fails into createErrorOMResponse.
+    OzoneManager mockOm = mock(OzoneManager.class);
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        IOMClientRequest request = OzoneManagerRatisUtils.createClientRequest(omRequest, mockOm);
+        assertThat(request).isNotInstanceOf(OMStartFinalizeUpgradeRequest.class);
+        assertEquals(omRequest, request.getOmRequest());
+        OzoneManagerProtocolProtos.OMResponse response =
+            request.validateAndUpdateCache(mockOm, ExecutionContext.of(1L, null)).getOMResponse();
+        assertEquals(OzoneManagerProtocolProtos.Status.INTERNAL_ERROR, response.getStatus());
+      }
+      collector.assertParent("OM.validateAndUpdateCache", "test");
+      collector.assertError("OM.validateAndUpdateCache");
+      collector.assertAttribute("OM.validateAndUpdateCache", SpanAttributeKeys.STATUS, "INTERNAL_ERROR");
+      collector.assertExceptionRecorded("OM.validateAndUpdateCache", NullPointerException.class);
+      // getOmRequest is a getter, so the proxy does not trace it.
+      assertThat(collector.named("OM.getOmRequest")).isEmpty();
+    }
   }
 
   @Test

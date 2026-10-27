@@ -60,6 +60,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
+import org.apache.hadoop.hdds.tracing.TracingUtil.TraceCloseable;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.hdds.utils.db.DBStore;
 import org.apache.hadoop.io.Text;
@@ -258,6 +262,50 @@ public class TestOzoneManagerStateMachine {
     Message result = future.get();
 
     assertNotNull(result);
+  }
+
+  @Test
+  public void testApplyTransactionSpanContinuesRequestTrace() throws Exception {
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      OMRequest request;
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        request = sampleWriteRequest().toBuilder().setTraceID(TracingUtil.exportCurrentSpan()).build();
+      }
+      stubOkWriteResponse();
+
+      assertNotNull(sm.applyTransaction(mockTrx(request, 1, 5)).get());
+
+      collector.assertParent("OM.applyTransaction", "test");
+      collector.assertNotError("OM.applyTransaction");
+      collector.assertAttribute("OM.applyTransaction", SpanAttributeKeys.OM_ROLE, "leader");
+    }
+  }
+
+  @Test
+  public void testApplyTransactionSpanOnFollower() throws Exception {
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      stubOkWriteResponse();
+
+      // Null context simulates follower: request deserialized from log data
+      assertNotNull(sm.applyTransaction(mockTrx(sampleWriteRequest(), 1, 5, null)).get());
+
+      collector.assertSingleSpan("OM.applyTransaction");
+      collector.assertAttribute("OM.applyTransaction", SpanAttributeKeys.OM_ROLE, "follower");
+    }
+  }
+
+  @Test
+  public void testApplyTransactionSpanRecordsIOException() throws Exception {
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      when(handler.handleWriteRequest(any(OMRequest.class), any(), eq(doubleBuffer)))
+          .thenThrow(new IOException("disk full"));
+
+      // processResponse terminates on INTERNAL_ERROR; the span has already ended by then.
+      assertThrows(ExecutionException.class, () -> sm.applyTransaction(mockTrx(sampleWriteRequest(), 1, 5)).get());
+
+      collector.assertError("OM.applyTransaction", "disk full");
+      collector.assertExceptionRecorded("OM.applyTransaction", IOException.class);
+    }
   }
 
   @Test
@@ -1693,6 +1741,16 @@ public class TestOzoneManagerStateMachine {
         .setResolvedStsTempAccessKeyId("tempAccessKeyId")
         .setResolvedStsSecretKeyId("secretKeyId")
         .build();
+  }
+
+  private void stubOkWriteResponse() throws IOException {
+    OMClientResponse clientResponse = mock(OMClientResponse.class);
+    when(clientResponse.getOMResponse()).thenReturn(OMResponse.newBuilder()
+        .setCmdType(Type.CreateKey)
+        .setStatus(Status.OK)
+        .setSuccess(true)
+        .build());
+    when(handler.handleWriteRequest(any(OMRequest.class), any(), eq(doubleBuffer))).thenReturn(clientResponse);
   }
 
   private TransactionContext mockTrx(OMRequest request, long term, long index) {

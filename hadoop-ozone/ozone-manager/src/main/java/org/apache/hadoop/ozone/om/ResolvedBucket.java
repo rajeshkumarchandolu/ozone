@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.om.helpers.BucketLayout;
 import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
@@ -195,6 +196,8 @@ public class ResolvedBucket {
   public Map<String, String> audit(Map<String, String> auditMap) {
     auditMap.putIfAbsent(OzoneConsts.VOLUME, requestedVolume());
     auditMap.putIfAbsent(OzoneConsts.BUCKET, requestedBucket());
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, auditMap.get(OzoneConsts.VOLUME));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, auditMap.get(OzoneConsts.BUCKET));
     if (isLink()) {
       auditMap.put(OzoneConsts.SOURCE_VOLUME, realVolume());
       auditMap.put(OzoneConsts.SOURCE_BUCKET, realBucket());

@@ -411,6 +411,18 @@ public final class TracingUtil {
         new TraceAllMethod<>(delegate, itf.getSimpleName())));
   }
 
+  /**
+   * Creates a {@link TraceAllMethod} proxy whose spans are named {@code spanPrefix + "." + method}.
+   * Returns the delegate itself when tracing is neither enabled nor application-aware.
+   */
+  public static <T> T createProxy(T delegate, Class<T> itf, String spanPrefix) {
+    if (!tracingEnabled && !applicationAware) {
+      return delegate;
+    }
+    return itf.cast(Proxy.newProxyInstance(itf.getClassLoader(), new Class<?>[] {itf},
+        new TraceAllMethod<>(delegate, spanPrefix)));
+  }
+
   public static boolean isTracingEnabled(ConfigurationSource conf) {
     return conf.getObject(TracingConfig.class).isTracingEnabled();
   }

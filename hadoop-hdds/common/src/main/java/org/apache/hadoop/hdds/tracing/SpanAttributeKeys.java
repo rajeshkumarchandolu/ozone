@@ -65,6 +65,15 @@ public final class SpanAttributeKeys {
   /** Bucket layout resolved for an OM key request, for example {@code FILE_SYSTEM_OPTIMIZED}. */
   public static final String OM_BUCKET_LAYOUT = "om.bucket_layout";
 
+  /** Whether an OM ACL check granted access. */
+  public static final String OM_ACL_GRANTED = "om.acl.granted";
+
+  /** Ratis role of the OM applying a transaction: {@code leader} or {@code follower}. */
+  public static final String OM_ROLE = "om.role";
+
+  /** Number of transactions in an OM double-buffer batch. */
+  public static final String OM_BATCH_SIZE = "om.batch_size";
+
   private SpanAttributeKeys() {
   }
 }

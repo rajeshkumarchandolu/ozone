@@ -29,13 +29,10 @@ import static org.apache.hadoop.ozone.util.MetricUtil.captureLatencyNs;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
@@ -95,12 +92,6 @@ public class OmMetadataReader implements IOmMetadataReader, Auditor {
   private static final Map<String, List<String>> DEPENDENT_S3_ACTIONS =
       Collections.singletonMap("GetObjectAttributes", Collections.singletonList("GetObject"));
 
-  /** Audit parameters that are also copied to the current span. Any other audit parameter is never copied. */
-  public static final Set<String> SPAN_AUDIT_KEYS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-      OzoneConsts.VOLUME, OzoneConsts.BUCKET, OzoneConsts.KEY, OzoneConsts.BUCKET_LAYOUT,
-      OzoneConsts.REPLICATION_CONFIG, OzoneConsts.DATA_SIZE, OzoneConsts.PREFIX, OzoneConsts.KEY_PREFIX,
-      OzoneConsts.START_KEY, OzoneConsts.MAX_KEYS)));
-
   private final KeyManager keyManager;
   private final PrefixManager prefixManager;
   private final VolumeManager volumeManager;
@@ -130,8 +121,8 @@ public class OmMetadataReader implements IOmMetadataReader, Auditor {
     this.audit = audit;
     this.metrics = omMetadataReaderMetrics;
     this.perfMetrics = ozoneManager.getPerfMetrics();
-    this.accessAuthorizer = accessAuthorizer != null ? accessAuthorizer
-        : OzoneAccessAuthorizer.get();
+    this.accessAuthorizer = TracingUtil.createProxy(accessAuthorizer != null ? accessAuthorizer
+        : OzoneAccessAuthorizer.get(), IAccessAuthorizer.class, "AccessChecker");
   }
 
   /**
@@ -420,6 +411,9 @@ public class OmMetadataReader implements IOmMetadataReader, Auditor {
     auditMap.put(OzoneConsts.START_KEY, startKey);
     auditMap.put(OzoneConsts.MAX_KEYS, String.valueOf(maxKeys));
     auditMap.put(OzoneConsts.KEY_PREFIX, keyPrefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.START_KEY, startKey);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.MAX_KEYS, maxKeys);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.KEY_PREFIX, keyPrefix);
 
     try {
       if (isAclEnabled) {
@@ -854,7 +848,7 @@ public class OmMetadataReader implements IOmMetadataReader, Auditor {
   @Override
   public AuditMessage buildAuditMessageForSuccess(AuditAction op,
       Map<String, String> auditMap) {
-    addAuditParamsToCurrentSpan(auditMap);
+
     return new AuditMessage.Builder()
         .setUser(getRemoteUserName())
         .atIp(getClientAddress())
@@ -867,7 +861,7 @@ public class OmMetadataReader implements IOmMetadataReader, Auditor {
   @Override
   public AuditMessage buildAuditMessageForFailure(AuditAction op,
       Map<String, String> auditMap, Throwable throwable) {
-    addAuditParamsToCurrentSpan(auditMap);
+
     return new AuditMessage.Builder()
         .setUser(getRemoteUserName())
         .atIp(getClientAddress())
@@ -876,16 +870,6 @@ public class OmMetadataReader implements IOmMetadataReader, Auditor {
         .withResult(AuditEventStatus.FAILURE)
         .withException(throwable)
         .build();
-  }
-
-  /** Copies the {@link #SPAN_AUDIT_KEYS} entries of {@code auditMap} to the current span. */
-  private static void addAuditParamsToCurrentSpan(Map<String, String> auditMap) {
-    if (auditMap == null) {
-      return;
-    }
-    for (String key : SPAN_AUDIT_KEYS) {
-      TracingUtil.addAttributesToCurrentSpan(key, auditMap.get(key));
-    }
   }
 
   /**

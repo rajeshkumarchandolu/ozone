@@ -45,9 +45,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.tracing.TestSpanCollector;
@@ -56,7 +54,6 @@ import org.apache.hadoop.hdds.tracing.TracingUtil.TraceCloseable;
 import org.apache.hadoop.ipc_.Server;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.AuditLogger;
-import org.apache.hadoop.ozone.audit.OMAction;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes;
 import org.apache.hadoop.ozone.om.helpers.BucketLayout;
@@ -980,23 +977,74 @@ public class TestOMMetadataReader {
   }
 
   @Test
-  public void testReadAuditAllowListCopiedToSpan() throws Exception {
-    OmMetadataReader reader = createMetadataReader(createMockIAccessAuthorizerReturningTrue());
-    Map<String, String> auditMap = new HashMap<>();
-    auditMap.put(OzoneConsts.VOLUME, "vol1");
-    auditMap.put(OzoneConsts.BUCKET, "bucket1");
-    auditMap.put(OzoneConsts.KEY, "key1");
-    auditMap.put(OzoneConsts.OWNER, "user1");
+  public void testKeyArgsAuditMapCopiedToSpan() {
+    OmKeyArgs keyArgs = new OmKeyArgs.Builder().setVolumeName("vol1").setBucketName("bucket1").setKeyName("key1")
+        .setOwnerName("user1").setDataSize(10).build();
 
     try (TestSpanCollector collector = TestSpanCollector.install("om")) {
       try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
-        reader.buildAuditMessageForSuccess(OMAction.READ_KEY, auditMap);
+        keyArgs.toAuditMap();
       }
 
       collector.assertAttribute("test", OzoneConsts.VOLUME, "vol1");
       collector.assertAttribute("test", OzoneConsts.BUCKET, "bucket1");
       collector.assertAttribute("test", OzoneConsts.KEY, "key1");
+      collector.assertAttribute("test", OzoneConsts.DATA_SIZE, 10L);
       collector.assertNoAttribute("test", OzoneConsts.OWNER);
     }
+  }
+
+  @Test
+  public void testCheckAccessSpanIsChildOfCurrentSpan() throws Exception {
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      // the authorizer proxy is created with the reader, so the reader is built after tracing is initialized
+      OmMetadataReader reader = createMetadataReader(createMockIAccessAuthorizerReturningTrue());
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        assertTrue(checkKeyReadAcl(reader, true));
+      }
+
+      collector.assertParent("AccessChecker.checkAccess", "test");
+      collector.assertNotError("AccessChecker.checkAccess");
+    }
+  }
+
+  @Test
+  public void testCheckAccessDeniedIsNotError() throws Exception {
+    IAccessAuthorizer accessAuthorizer = mock(IAccessAuthorizer.class);
+    when(accessAuthorizer.checkAccess(any(OzoneObj.class), any(RequestContext.class))).thenReturn(false);
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      OmMetadataReader reader = createMetadataReader(accessAuthorizer);
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        assertThrows(OMException.class, () -> checkKeyReadAcl(reader, true));
+      }
+
+      // the denial is a result of checkAccess; the PERMISSION_DENIED is thrown by checkAcls after it returns
+      collector.assertNotError("AccessChecker.checkAccess");
+    }
+  }
+
+  @Test
+  public void testCheckAccessExceptionMarksSpanError() throws Exception {
+    IAccessAuthorizer accessAuthorizer = mock(IAccessAuthorizer.class);
+    when(accessAuthorizer.checkAccess(any(OzoneObj.class), any(RequestContext.class)))
+        .thenThrow(new OMException("unexpected object", ResultCodes.INVALID_REQUEST));
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      OmMetadataReader reader = createMetadataReader(accessAuthorizer);
+      try (TraceCloseable ignored = TracingUtil.createActivatedSpan("test")) {
+        assertThrows(OMException.class, () -> checkKeyReadAcl(reader, true));
+      }
+
+      collector.assertError("AccessChecker.checkAccess");
+      collector.assertExceptionRecorded("AccessChecker.checkAccess", OMException.class);
+    }
+  }
+
+  private static boolean checkKeyReadAcl(OmMetadataReader reader, boolean throwIfPermissionDenied)
+      throws OMException {
+    return reader.checkAcls(KEY, OzoneObj.StoreType.OZONE, READ, VOLUME_NAME, BUCKET_NAME, "key",
+        UserGroupInformation.createRemoteUser("testUser"), InetAddress.getLoopbackAddress(), "localhost",
+        throwIfPermissionDenied, "owner");
   }
 }

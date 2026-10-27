@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
 import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.hdds.utils.db.BatchOperation;
@@ -285,22 +286,23 @@ public final class OzoneManagerDoubleBuffer {
       runnable.run();
       return;
     }
-    String spanName = "DB-commitWriteBatch-Size-" + batchSize;
-    TracingUtil.executeAsChildSpan(spanName, parentName, runnable);
+    TracingUtil.executeAsChildSpan("DB-commitWriteBatch", parentName, () -> {
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_BATCH_SIZE, batchSize);
+      runnable.run();
+    });
   }
 
   /**
    * Add to writeBatch {@link TransactionInfo}.
    */
   private void addToBatchTransactionInfoWithTrace(String parentName,
-      long transactionIndex, CheckedRunnable<IOException> runnable)
+      CheckedRunnable<IOException> runnable)
       throws IOException {
     if (!isTracingEnabled) {
       runnable.run();
       return;
     }
-    String spanName = "DB-addWriteBatch-transactioninfo-" + transactionIndex;
-    TracingUtil.executeAsChildSpan(spanName, parentName, runnable);
+    TracingUtil.executeAsChildSpan("DB-addWriteBatch-transactioninfo", parentName, runnable);
   }
 
   /**
@@ -419,7 +421,6 @@ public final class OzoneManagerDoubleBuffer {
 
 
       addToBatchTransactionInfoWithTrace(lastTraceId,
-          lastTransaction.getIndex(),
           () -> omMetadataManager.getTransactionInfoTable().putWithBatch(
               batchOperation, TRANSACTION_INFO_KEY, TransactionInfo.valueOf(lastTransaction)));
 

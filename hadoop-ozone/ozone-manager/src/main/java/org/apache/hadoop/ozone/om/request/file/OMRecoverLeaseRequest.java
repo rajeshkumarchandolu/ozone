@@ -38,6 +38,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
 import org.apache.hadoop.hdds.security.token.OzoneBlockTokenSecretManager;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.ClientVersion;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.OMAction;
@@ -129,6 +130,9 @@ public class OMRecoverLeaseRequest extends OMKeyRequest {
     auditMap.put(OzoneConsts.VOLUME, volumeName);
     auditMap.put(OzoneConsts.BUCKET, bucketName);
     auditMap.put(OzoneConsts.KEY, keyName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volumeName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucketName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.KEY, keyName);
 
     OMResponse.Builder omResponse = OmResponseUtil.getOMResponseBuilder(
         getOmRequest());

@@ -27,6 +27,8 @@ import org.apache.hadoop.hdds.annotation.InterfaceAudience;
 import org.apache.hadoop.hdds.annotation.InterfaceStability;
 import org.apache.hadoop.hdds.server.OzoneAdmins;
 import org.apache.hadoop.hdds.server.OzoneBlacklist;
+import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.om.BucketManager;
 import org.apache.hadoop.ozone.om.KeyManager;
@@ -108,6 +110,7 @@ public class OzoneNativeAuthorizer implements OzoneManagerAuthorizer {
     if (blacklistCheck.test(context.getClientUgi())) {
       LOG.debug("Permission DENIED on request {} for object {}. "
           + "Reason: user is under the blacklist", context, ozObject);
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, false);
       return false;
     }
 
@@ -117,11 +120,13 @@ public class OzoneNativeAuthorizer implements OzoneManagerAuthorizer {
         || context.getAclRights() == ACLType.LIST)) {
       LOG.debug("Permission DENIED on request {} for object {}. "
           + "Reason: user is under a read blacklist", context, ozObject);
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, false);
       return false;
     }
 
     // bypass all checks for admin
     if (adminCheck.test(context.getClientUgi())) {
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, true);
       return true;
     }
 
@@ -130,6 +135,7 @@ public class OzoneNativeAuthorizer implements OzoneManagerAuthorizer {
         && (context.getAclRights() == ACLType.READ
         || context.getAclRights() == ACLType.READ_ACL
         || context.getAclRights() == ACLType.LIST)) {
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, true);
       return true;
     }
 
@@ -137,7 +143,9 @@ public class OzoneNativeAuthorizer implements OzoneManagerAuthorizer {
     boolean isListAllVolume = ((context.getAclRights() == ACLType.LIST) &&
         objInfo.getVolumeName().equals(OzoneConsts.OZONE_ROOT));
     if (isListAllVolume) {
-      return getAllowListAllVolumes();
+      boolean listAllVolumes = getAllowListAllVolumes();
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, listAllVolumes);
+      return listAllVolumes;
     }
 
     ACLType parentAclRight = OzoneAclUtils.getParentNativeAcl(
@@ -161,48 +169,59 @@ public class OzoneNativeAuthorizer implements OzoneManagerAuthorizer {
       LOG.trace("Checking access for volume: {}", objInfo);
       if (isACLTypeCreate) {
         // only admin is allowed to create volume and list all volumes
+        TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, false);
         return false;
       }
-      return isOwner || volumeManager.checkAccess(objInfo, context);
+      boolean volumeAccess = isOwner || volumeManager.checkAccess(objInfo, context);
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, volumeAccess);
+      return volumeAccess;
     case BUCKET:
       LOG.trace("Checking access for bucket: {}", objInfo);
       // Skip check for volume owner
       if (isOwner) {
+        TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, true);
         return true;
       }
       // Skip bucket access check for CREATE acl since
       // bucket will not exist at the time of creation
       boolean bucketAccess = isACLTypeCreate
           || bucketManager.checkAccess(objInfo, context);
-      return (bucketAccess
-          && volumeManager.checkAccess(objInfo, parentContext));
+      boolean bucketGranted = bucketAccess && volumeManager.checkAccess(objInfo, parentContext);
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, bucketGranted);
+      return bucketGranted;
     case KEY:
       LOG.trace("Checking access for Key: {}", objInfo);
       // Skip check for volume owner
       if (isOwner) {
+        TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, true);
         return true;
       }
       // Skip key access check for CREATE acl since
       // key will not exist at the time of creation
       boolean keyAccess = isACLTypeCreate
           || keyManager.checkAccess(objInfo, context);
-      return (keyAccess
+      boolean keyGranted = keyAccess
           && prefixManager.checkAccess(objInfo, parentContext)
           && bucketManager.checkAccess(objInfo, parentContext)
-          && volumeManager.checkAccess(objInfo, parentVolContext));
+          && volumeManager.checkAccess(objInfo, parentVolContext);
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, keyGranted);
+      return keyGranted;
     case PREFIX:
       LOG.trace("Checking access for Prefix: {}", objInfo);
       // Skip check for volume owner
       if (isOwner) {
+        TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, true);
         return true;
       }
       // Skip prefix access check for CREATE acl since
       // prefix will not exist at the time of creation
       boolean prefixAccess = isACLTypeCreate
           || prefixManager.checkAccess(objInfo, context);
-      return (prefixAccess
+      boolean prefixGranted = prefixAccess
           && bucketManager.checkAccess(objInfo, parentContext)
-          && volumeManager.checkAccess(objInfo, parentVolContext));
+          && volumeManager.checkAccess(objInfo, parentVolContext);
+      TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_ACL_GRANTED, prefixGranted);
+      return prefixGranted;
     default:
       throw new OMException("Unexpected object type:" +
           objInfo.getResourceType(), INVALID_REQUEST);

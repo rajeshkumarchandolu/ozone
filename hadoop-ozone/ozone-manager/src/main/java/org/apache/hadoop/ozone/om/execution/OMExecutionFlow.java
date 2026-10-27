@@ -23,13 +23,12 @@ import com.google.protobuf.ServiceException;
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.Set;
-import org.apache.hadoop.hdds.tracing.SpanAttributeKeys;
-import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.om.OMPerformanceMetrics;
 import org.apache.hadoop.ozone.om.OzoneManager;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.helpers.OMAuditLogger;
 import org.apache.hadoop.ozone.om.ratis.utils.OzoneManagerRatisUtils;
+import org.apache.hadoop.ozone.om.request.IOMClientRequest;
 import org.apache.hadoop.ozone.om.request.OMClientRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.OMRequest;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.OMResponse;
@@ -70,7 +69,7 @@ public class OMExecutionFlow {
 
   private OMResponse submitExecutionToRatis(OMRequest request, boolean isWrite) throws ServiceException {
     // 1. create client request and preExecute
-    OMClientRequest omClientRequest = null;
+    IOMClientRequest omClientRequest = null;
     final OMRequest requestToSubmit;
     if (isWrite) {
       try {
@@ -80,9 +79,7 @@ public class OMExecutionFlow {
         }
         omClientRequest = OzoneManagerRatisUtils.createClientRequest(request, ozoneManager);
         assert (omClientRequest != null);
-        TracingUtil.addAttributesToCurrentSpan(SpanAttributeKeys.OM_REQUEST_CLASS,
-            omClientRequest.getClass().getSimpleName());
-        final OMClientRequest finalOmClientRequest = omClientRequest;
+        final IOMClientRequest finalOmClientRequest = omClientRequest;
         requestToSubmit = captureLatencyNs(perfMetrics.getPreExecuteLatencyNs(),
             () -> finalOmClientRequest.preExecute(ozoneManager));
       } catch (IOException ex) {
@@ -90,14 +87,12 @@ public class OMExecutionFlow {
           OMAuditLogger.log(omClientRequest.getAuditBuilder());
           omClientRequest.handleRequestFailure(ozoneManager);
         }
-        TracingUtil.recordExceptionInCurrentSpan(ex);
         return OzoneManagerRatisUtils.createErrorResponse(request, ex);
       }
     } else {
       try {
         requestToSubmit = captureReadContext(request);
       } catch (IOException ex) {
-        TracingUtil.recordExceptionInCurrentSpan(ex);
         return OzoneManagerRatisUtils.createErrorResponse(request, ex);
       }
     }

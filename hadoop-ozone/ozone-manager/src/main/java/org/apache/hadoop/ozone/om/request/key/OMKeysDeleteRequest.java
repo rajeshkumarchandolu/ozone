@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.db.Table;
 import org.apache.hadoop.hdds.utils.db.cache.CacheKey;
 import org.apache.hadoop.hdds.utils.db.cache.CacheValue;
@@ -140,6 +141,8 @@ public class OMKeysDeleteRequest extends OMKeyRequest {
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(VOLUME, volumeName);
     auditMap.put(BUCKET, bucketName);
+    TracingUtil.addAttributesToCurrentSpan(VOLUME, volumeName);
+    TracingUtil.addAttributesToCurrentSpan(BUCKET, bucketName);
     List<OmKeyInfo> omKeyInfoList = new ArrayList<>();
     // dirList is applicable for FSO implementation
     List<OmKeyInfo> dirList = new ArrayList<>();

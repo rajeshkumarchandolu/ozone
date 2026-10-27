@@ -222,6 +222,7 @@ import org.apache.hadoop.hdds.server.OzoneBlacklist;
 import org.apache.hadoop.hdds.server.ServiceRuntimeInfoImpl;
 import org.apache.hadoop.hdds.server.http.RatisDropwizardExports;
 import org.apache.hadoop.hdds.tracing.TracingConfig;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.FaultInjector;
 import org.apache.hadoop.hdds.utils.HAUtils;
 import org.apache.hadoop.hdds.utils.HddsServerUtil;
@@ -3067,6 +3068,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     auditMap.put(OzoneConsts.PREV_KEY, prevKey);
     auditMap.put(OzoneConsts.PREFIX, prefix);
     auditMap.put(OzoneConsts.MAX_KEYS, String.valueOf(maxKeys));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.MAX_KEYS, maxKeys);
     auditMap.put(OzoneConsts.USERNAME, userName);
     try {
       metrics.incNumVolumeLists();
@@ -3125,6 +3128,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     auditMap.put(OzoneConsts.PREV_KEY, prevKey);
     auditMap.put(OzoneConsts.PREFIX, prefix);
     auditMap.put(OzoneConsts.MAX_KEYS, String.valueOf(maxKeys));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.MAX_KEYS, maxKeys);
     auditMap.put(OzoneConsts.USERNAME, null);
     try {
       metrics.incNumVolumeLists();
@@ -3160,6 +3165,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     Map<String, String> auditMap = buildAuditMap(volumeName);
     auditMap.put(OzoneConsts.START_KEY, startKey);
     auditMap.put(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.START_KEY, startKey);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
     auditMap.put(OzoneConsts.MAX_NUM_OF_BUCKETS,
         String.valueOf(maxNumOfBuckets));
     auditMap.put(OzoneConsts.HAS_SNAPSHOT, String.valueOf(hasSnapshot));
@@ -3280,6 +3287,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     boolean auditSuccess = true;
     Map<String, String> auditMap = buildAuditMap(volume);
     auditMap.put(OzoneConsts.BUCKET, bucket);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     try {
       if (getAclsEnabled()) {
         omMetadataReader.checkAcls(ResourceType.BUCKET,
@@ -3361,12 +3369,14 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     metrics.incNumSnapshotInfos();
     Map<String, String> auditMap = buildAuditMap(volumeName);
     auditMap.put(OzoneConsts.BUCKET, bucketName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucketName);
     try {
       // Updating the volumeName & bucketName in case the bucket is a linked bucket. We need to do this before a
       // permission check, since linked bucket permissions and source bucket permissions could be different.
       ResolvedBucket resolvedBucket = resolveBucketLink(Pair.of(volumeName, bucketName));
       auditMap = buildAuditMap(resolvedBucket.realVolume());
       auditMap.put(OzoneConsts.BUCKET, resolvedBucket.realBucket());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, resolvedBucket.realBucket());
       if (getAclsEnabled()) {
         omMetadataReader.checkAcls(ResourceType.BUCKET, StoreType.OZONE,
             ACLType.READ, resolvedBucket.realVolume(), resolvedBucket.realBucket(), null);
@@ -3392,12 +3402,14 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     metrics.incNumSnapshotLists();
     Map<String, String> auditMap = buildAuditMap(volumeName);
     auditMap.put(OzoneConsts.BUCKET, bucketName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucketName);
     try {
       // Updating the volumeName & bucketName in case the bucket is a linked bucket. We need to do this before a
       // permission check, since linked bucket permissions and source bucket permissions could be different.
       ResolvedBucket resolvedBucket = resolveBucketLink(Pair.of(volumeName, bucketName));
       auditMap = buildAuditMap(resolvedBucket.realVolume());
       auditMap.put(OzoneConsts.BUCKET, resolvedBucket.realBucket());
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, resolvedBucket.realBucket());
       if (getAclsEnabled()) {
         omMetadataReader.checkAcls(ResourceType.BUCKET, StoreType.OZONE,
             ACLType.LIST, resolvedBucket.realVolume(), resolvedBucket.realBucket(), null);
@@ -3635,9 +3647,11 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
       String bucketName) throws IOException {
     Map<String, String> auditMap = buildAuditMap(volumeName);
     auditMap.put(OzoneConsts.BUCKET, bucketName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucketName);
     ResolvedBucket resolvedBucket = resolveBucketLink(Pair.of(volumeName, bucketName));
     auditMap = buildAuditMap(resolvedBucket.realVolume());
     auditMap.put(OzoneConsts.BUCKET, resolvedBucket.realBucket());
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, resolvedBucket.realBucket());
 
     if (isAclEnabled) {
       omMetadataReader.checkAcls(ResourceType.BUCKET, StoreType.OZONE, ACLType.READ,
@@ -3683,6 +3697,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
   private Map<String, String> buildAuditMap(String volume) {
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, volume);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volume);
     return auditMap;
   }
 
@@ -4352,6 +4367,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     final Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.TENANT, tenantId);
     auditMap.put(OzoneConsts.VOLUME, volumeName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volumeName);
     auditMap.put(OzoneConsts.USER_PREFIX, prefix);
 
     OMLockDetails omLockDetails =
@@ -4500,6 +4516,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     final Map<String, String> auditMap = bucket.audit();
     try {
       auditMap.put(OzoneConsts.KEY, keyName);
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.KEY, keyName);
       auditMap.put(OzoneConsts.UPLOAD_ID, uploadID);
       auditMap.put(OzoneConsts.PART_NUMBER_MARKER,
           Integer.toString(partNumberMarker));
@@ -4538,6 +4555,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
 
     final Map<String, String> auditMap = bucket.audit();
     auditMap.put(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
 
     try {
       if (getAclsEnabled()) {
@@ -5922,6 +5940,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, volume);
     auditMap.put(OzoneConsts.BUCKET, bucket);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volume);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     auditMap.put(OzoneConsts.TOKEN, token);
@@ -5966,6 +5986,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, volume);
     auditMap.put(OzoneConsts.BUCKET, bucket);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volume);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     auditMap.put(OzoneConsts.TOKEN, token);
@@ -6008,6 +6030,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, volume);
     auditMap.put(OzoneConsts.BUCKET, bucket);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volume);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     auditMap.put(OzoneConsts.FORCE_FULL_DIFF, String.valueOf(forceFullDiff));
@@ -6048,6 +6072,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, volume);
     auditMap.put(OzoneConsts.BUCKET, bucket);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volume);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     metrics.incNumCancelSnapshotDiffs();
@@ -6086,6 +6112,8 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, volume);
     auditMap.put(OzoneConsts.BUCKET, bucket);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volume);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.JOB_STATUS, jobStatus);
     metrics.incNumListSnapshotDiffJobs();
 

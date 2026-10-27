@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.nio.file.InvalidPathException;
 import java.util.Map;
 import java.util.Objects;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.db.Table;
 import org.apache.hadoop.hdds.utils.db.cache.CacheKey;
 import org.apache.hadoop.hdds.utils.db.cache.CacheValue;
@@ -196,6 +197,9 @@ public class OMKeyDeleteRequest extends OMKeyRequest {
       if (omKeyInfo.isFile()) {
         auditMap.put(OzoneConsts.DATA_SIZE, String.valueOf(omKeyInfo.getDataSize()));
         auditMap.put(OzoneConsts.REPLICATION_CONFIG, omKeyInfo.getReplicationConfig().toString());
+        TracingUtil.addAttributesToCurrentSpan(OzoneConsts.DATA_SIZE, omKeyInfo.getDataSize());
+        TracingUtil.addAttributesToCurrentSpan(OzoneConsts.REPLICATION_CONFIG,
+            auditMap.get(OzoneConsts.REPLICATION_CONFIG));
       }
 
       result = Result.SUCCESS;

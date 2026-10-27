@@ -133,7 +133,6 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements OzoneManagerP
           () -> requestValidations.validateRequest(request));
     } catch (Exception e) {
       if (e instanceof OMException) {
-        TracingUtil.recordExceptionInCurrentSpan(e);
         return createErrorResponse(request, (OMException) e);
       }
       throw new ServiceException(e);
@@ -233,7 +232,6 @@ public class OzoneManagerProtocolServerSideTranslatorPB implements OzoneManagerP
                 .clearDerivedKeyPiggyBacking()).build();
           }
         } catch (IOException ex) {
-          TracingUtil.recordExceptionInCurrentSpan(ex);
           return createErrorResponse(request, ex);
         }
       }
