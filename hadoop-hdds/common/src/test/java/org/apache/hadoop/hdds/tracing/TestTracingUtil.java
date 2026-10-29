@@ -40,6 +40,8 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.trace.ReadableSpan;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.SpanData;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import java.io.IOException;
 import java.util.List;
 import org.apache.hadoop.hdds.conf.InMemoryConfigurationForTesting;
@@ -60,7 +62,9 @@ public class TestTracingUtil {
   public void setUp() {
     TracingUtil.shutdownTracing();
     GlobalOpenTelemetry.resetForTest();
-    GlobalOpenTelemetry.set(OpenTelemetrySdk.builder().setTracerProvider(SdkTracerProvider.builder().build()).build());
+    SdkTracerProvider provider =
+        SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop())).build();
+    GlobalOpenTelemetry.set(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
   }
 
   @AfterEach
