@@ -35,6 +35,9 @@ public final class SpanAttributeKeys {
   /** Prefix of a CLI option attribute, followed by the option's longest name, for example {@code cli.option.--type}. */
   public static final String CLI_OPTION_PREFIX = "cli.option.";
 
+  /** Raft role of the OM applying a transaction: leader or follower. */
+  public static final String OM_ROLE = "om.role";
+
   private SpanAttributeKeys() {
   }
 }

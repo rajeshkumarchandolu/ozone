@@ -42,6 +42,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.opentelemetry.api.trace.SpanKind;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -50,6 +51,7 @@ import java.util.Collections;
 import java.util.List;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
 import org.apache.hadoop.ipc_.Server;
 import org.apache.hadoop.ozone.audit.AuditLogger;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
@@ -65,6 +67,7 @@ import org.apache.hadoop.ozone.om.protocolPB.grpc.GrpcClientConstants;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.S3Authentication;
 import org.apache.hadoop.ozone.security.STSTokenIdentifier;
 import org.apache.hadoop.ozone.security.acl.IAccessAuthorizer;
+import org.apache.hadoop.ozone.security.acl.OzoneAccessAuthorizer;
 import org.apache.hadoop.ozone.security.acl.OzoneObj;
 import org.apache.hadoop.ozone.security.acl.OzoneObjInfo;
 import org.apache.hadoop.ozone.security.acl.RequestContext;
@@ -141,6 +144,31 @@ public class TestOMMetadataReader {
     assertTrue(omMetadataReader.checkAcls(obj, contextWithoutSessionPolicyBuilder, true));
 
     verifySessionPolicyPassedToAuthorizer(accessAuthorizer, obj, sessionPolicy);
+  }
+
+  @Test
+  public void testCheckAccessIsTraced() throws Exception {
+    try (TestSpanCollector collector = TestSpanCollector.install("test-om")) {
+      final IAccessAuthorizer accessAuthorizer = createMockIAccessAuthorizerReturningTrue();
+      final OmMetadataReader omMetadataReader = createMetadataReader(accessAuthorizer);
+      final String spanName = accessAuthorizer.getClass().getSimpleName() + ".checkAccess";
+
+      assertTrue(omMetadataReader.checkAcls(createTestOzoneObj(), createTestRequestContextBuilder(), true));
+
+      collector.assertSingleSpan(spanName);
+      collector.assertKind(spanName, SpanKind.INTERNAL);
+    }
+  }
+
+  @Test
+  public void testIsNativeIsNotTraced() throws Exception {
+    try (TestSpanCollector collector = TestSpanCollector.install("test-om")) {
+      final OmMetadataReader omMetadataReader = createMetadataReader(OzoneAccessAuthorizer.get());
+
+      assertTrue(omMetadataReader.isNativeAuthorizerEnabled());
+
+      assertEquals(0, collector.getSpans().size(), () -> "spans: " + collector.getSpans());
+    }
   }
 
   @Test
