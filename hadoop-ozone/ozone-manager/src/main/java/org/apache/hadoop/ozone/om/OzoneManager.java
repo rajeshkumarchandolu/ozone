@@ -3090,9 +3090,13 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     boolean auditSuccess = true;
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.PREV_KEY, prevKey);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREV_KEY, prevKey);
     auditMap.put(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
     auditMap.put(OzoneConsts.MAX_KEYS, String.valueOf(maxKeys));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.MAX_KEYS, String.valueOf(maxKeys));
     auditMap.put(OzoneConsts.USERNAME, userName);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.USERNAME, userName);
     try {
       metrics.incNumVolumeLists();
       if (getAclsEnabled()) {
@@ -3148,9 +3152,13 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     boolean auditSuccess = true;
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.PREV_KEY, prevKey);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREV_KEY, prevKey);
     auditMap.put(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
     auditMap.put(OzoneConsts.MAX_KEYS, String.valueOf(maxKeys));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.MAX_KEYS, String.valueOf(maxKeys));
     auditMap.put(OzoneConsts.USERNAME, null);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.USERNAME, null);
     try {
       metrics.incNumVolumeLists();
       if (getAclsEnabled()) {
@@ -3184,10 +3192,15 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     boolean auditSuccess = true;
     Map<String, String> auditMap = buildAuditMap(volumeName);
     auditMap.put(OzoneConsts.START_KEY, startKey);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.START_KEY, startKey);
     auditMap.put(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
     auditMap.put(OzoneConsts.MAX_NUM_OF_BUCKETS,
         String.valueOf(maxNumOfBuckets));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.MAX_NUM_OF_BUCKETS,
+        String.valueOf(maxNumOfBuckets));
     auditMap.put(OzoneConsts.HAS_SNAPSHOT, String.valueOf(hasSnapshot));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.HAS_SNAPSHOT, String.valueOf(hasSnapshot));
 
     try {
       if (getAclsEnabled()) {
@@ -4384,6 +4397,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     final String volumeName = multiTenantManager.getTenantVolumeName(tenantId);
     final Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.TENANT, tenantId);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.TENANT, tenantId);
     auditMap.put(OzoneConsts.VOLUME, volumeName);
     TracingUtil.addAttributesToCurrentSpan(OzoneConsts.VOLUME, volumeName);
     auditMap.put(OzoneConsts.USER_PREFIX, prefix);
@@ -4536,9 +4550,13 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
       auditMap.put(OzoneConsts.KEY, keyName);
       TracingUtil.addAttributesToCurrentSpan(OzoneConsts.KEY, keyName);
       auditMap.put(OzoneConsts.UPLOAD_ID, uploadID);
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.UPLOAD_ID, uploadID);
       auditMap.put(OzoneConsts.PART_NUMBER_MARKER,
           Integer.toString(partNumberMarker));
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PART_NUMBER_MARKER,
+          Integer.toString(partNumberMarker));
       auditMap.put(OzoneConsts.MAX_PARTS, Integer.toString(maxParts));
+      TracingUtil.addAttributesToCurrentSpan(OzoneConsts.MAX_PARTS, Integer.toString(maxParts));
       OMMultipartUploadUtils.validateUploadId(uploadID);
 
       if (getAclsEnabled()) {
@@ -4574,6 +4592,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
 
     final Map<String, String> auditMap = bucket.audit();
     auditMap.put(OzoneConsts.PREFIX, prefix);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PREFIX, prefix);
 
     try {
       if (getAclsEnabled()) {
@@ -5961,11 +5980,16 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     auditMap.put(OzoneConsts.BUCKET, bucket);
     TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     auditMap.put(OzoneConsts.TOKEN, token);
     auditMap.put(OzoneConsts.PAGE_SIZE, String.valueOf(pageSize));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PAGE_SIZE, String.valueOf(pageSize));
     auditMap.put(OzoneConsts.FORCE_FULL_DIFF, String.valueOf(forceFullDiff));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.FORCE_FULL_DIFF, String.valueOf(forceFullDiff));
     auditMap.put(OzoneConsts.DISABLE_NATIVE_DIFF, String.valueOf(disableNativeDiff));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.DISABLE_NATIVE_DIFF, String.valueOf(disableNativeDiff));
 
     try {
       // Updating the volumeName & bucketName in case the bucket is a linked bucket. We need to do this before a
@@ -6006,9 +6030,12 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     auditMap.put(OzoneConsts.BUCKET, bucket);
     TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     auditMap.put(OzoneConsts.TOKEN, token);
     auditMap.put(OzoneConsts.PAGE_SIZE, String.valueOf(pageSize));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.PAGE_SIZE, String.valueOf(pageSize));
 
     try {
       // Updating the volumeName & bucketName in case the bucket is a linked bucket. We need to do this before a
@@ -6049,9 +6076,13 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     auditMap.put(OzoneConsts.BUCKET, bucket);
     TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     auditMap.put(OzoneConsts.FORCE_FULL_DIFF, String.valueOf(forceFullDiff));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.FORCE_FULL_DIFF, String.valueOf(forceFullDiff));
     auditMap.put(OzoneConsts.DISABLE_NATIVE_DIFF, String.valueOf(disableNativeDiff));
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.DISABLE_NATIVE_DIFF, String.valueOf(disableNativeDiff));
 
     try {
       // Updating the volumeName & bucketName in case the bucket is a linked bucket. We need to do this before a
@@ -6100,7 +6131,9 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     auditMap.put(OzoneConsts.BUCKET, bucket);
     TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.FROM_SNAPSHOT, fromSnapshot);
     auditMap.put(OzoneConsts.TO_SNAPSHOT, toSnapshot);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.TO_SNAPSHOT, toSnapshot);
     metrics.incNumCancelSnapshotDiffs();
 
     try {
@@ -6140,6 +6173,7 @@ public final class OzoneManager extends ServiceRuntimeInfoImpl
     auditMap.put(OzoneConsts.BUCKET, bucket);
     TracingUtil.addAttributesToCurrentSpan(OzoneConsts.BUCKET, bucket);
     auditMap.put(OzoneConsts.JOB_STATUS, jobStatus);
+    TracingUtil.addAttributesToCurrentSpan(OzoneConsts.JOB_STATUS, jobStatus);
     metrics.incNumListSnapshotDiffJobs();
 
     try {
