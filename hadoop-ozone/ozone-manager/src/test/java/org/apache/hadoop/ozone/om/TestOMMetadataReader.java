@@ -42,7 +42,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.context.Scope;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -52,7 +54,9 @@ import java.util.List;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.tracing.TestSpanCollector;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ipc_.Server;
+import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.audit.AuditLogger;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes;
@@ -1141,5 +1145,31 @@ public class TestOMMetadataReader {
     assertNotNull(reader.getKeyInfo(getKeyInfoArgs("obs-bucket", false), assumeS3Context).getKeyInfo());
 
     verify(keyManager).getKeyInfo(any(OmKeyArgs.class), any(ResolvedBucket.class), any());
+  }
+
+  @Test
+  public void testKeyArgsAuditFieldsAreRecordedOnSpan() {
+    OmKeyArgs keyArgs = new OmKeyArgs.Builder()
+        .setVolumeName("vol1")
+        .setBucketName("bucket1")
+        .setKeyName("key1")
+        .setOwnerName("owner1")
+        .setDataSize(1024)
+        .build();
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      Span span = TracingUtil.createInternalSpan("request");
+      try (Scope ignored = span.makeCurrent()) {
+        keyArgs.toAuditMap();
+      } finally {
+        span.end();
+      }
+
+      collector.assertAttribute("request", OzoneConsts.VOLUME, "vol1");
+      collector.assertAttribute("request", OzoneConsts.BUCKET, "bucket1");
+      collector.assertAttribute("request", OzoneConsts.KEY, "key1");
+      collector.assertAttribute("request", OzoneConsts.DATA_SIZE, 1024L);
+      collector.assertNoAttribute("request", OzoneConsts.OWNER);
+    }
   }
 }
