@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ServiceException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -46,7 +47,10 @@ import org.apache.hadoop.hdds.protocol.proto.StorageContainerLocationProtocolPro
 import org.apache.hadoop.hdds.protocol.proto.StorageContainerLocationProtocolProtos.GetContainerWithPipelineBatchRequestProto;
 import org.apache.hadoop.hdds.protocol.proto.StorageContainerLocationProtocolProtos.GetContainerWithPipelineRequestProto;
 import org.apache.hadoop.hdds.protocol.proto.StorageContainerLocationProtocolProtos.GetExistContainerWithPipelinesInBatchRequestProto;
+import org.apache.hadoop.hdds.protocol.proto.StorageContainerLocationProtocolProtos.ScmContainerLocationRequest;
+import org.apache.hadoop.hdds.protocol.proto.StorageContainerLocationProtocolProtos.Type;
 import org.apache.hadoop.hdds.scm.HddsTestUtils;
+import org.apache.hadoop.hdds.scm.ScmTracingAttributes;
 import org.apache.hadoop.hdds.scm.container.common.helpers.ContainerWithPipeline;
 import org.apache.hadoop.hdds.scm.exceptions.SCMException;
 import org.apache.hadoop.hdds.scm.node.DatanodeInfo;
@@ -56,6 +60,7 @@ import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.pipeline.Pipeline.PipelineState;
 import org.apache.hadoop.hdds.scm.pipeline.PipelineID;
 import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
 import org.apache.hadoop.hdds.utils.ProtocolMessageMetrics;
 import org.apache.hadoop.ozone.ClientVersion;
 import org.apache.hadoop.ozone.container.upgrade.UpgradeUtils;
@@ -77,11 +82,12 @@ class TestStorageContainerLocationProtocolServerSideTranslatorPB {
   private StorageContainerLocationProtocolServerSideTranslatorPB service;
   private Map<DatanodeID, DatanodeInfo> registry;
   private List<DatanodeDetails> nodes;
+  private StorageContainerManager scm;
 
   @BeforeEach
   void setUp() throws Exception {
     impl = mock(StorageContainerLocationInternalInterface.class);
-    StorageContainerManager scm = mock(StorageContainerManager.class);
+    scm = mock(StorageContainerManager.class);
 
     registry = new HashMap<>();
     NodeManager nodeManager = mock(NodeManager.class);
@@ -220,5 +226,26 @@ class TestStorageContainerLocationProtocolServerSideTranslatorPB {
     SCMException ex = assertThrows(SCMException.class, () -> service.getContainerWithPipeline(
         GetContainerWithPipelineRequestProto.newBuilder().setContainerID(1L).build(), ClientVersion.CURRENT));
     assertThat(ex.getMessage()).contains(unknownNode.toString());
+  }
+
+  @Test
+  public void testSubmitRequestMarksServerSpanError() throws Exception {
+    when(scm.checkLeader()).thenReturn(true);
+    when(impl.getContainerWithPipeline(anyLong()))
+        .thenThrow(new SCMException("container 1 not found", SCMException.ResultCodes.CONTAINER_NOT_FOUND));
+    ScmContainerLocationRequest request = ScmContainerLocationRequest.newBuilder()
+        .setCmdType(Type.GetContainerWithPipeline)
+        .setVersion(ClientVersion.CURRENT.serialize())
+        .setGetContainerWithPipelineRequest(GetContainerWithPipelineRequestProto.newBuilder().setContainerID(1L))
+        .build();
+
+    try (TestSpanCollector collector = TestSpanCollector.install("scm")) {
+      assertThrows(ServiceException.class, () -> service.submitRequest(null, request));
+      collector.assertError("GetContainerWithPipeline",
+          "org.apache.hadoop.hdds.scm.exceptions.SCMException: container 1 not found");
+      collector.assertAttribute("GetContainerWithPipeline", ScmTracingAttributes.SCM_CMD_TYPE,
+          "GetContainerWithPipeline");
+      collector.assertExceptionRecorded("GetContainerWithPipeline", ServiceException.class);
+    }
   }
 }
