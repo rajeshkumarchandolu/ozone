@@ -971,6 +971,10 @@ public final class ContainerProtocolCalls  {
     if (token != null) {
       builder.setEncodedToken(token.encodeToUrlString());
     }
+    String traceId = TracingUtil.exportCurrentSpan();
+    if (traceId != null) {
+      builder.setTraceID(traceId);
+    }
 
     return builder.setDatanodeUuid(datanode.getUuidString())
         .setReadBlock(readBlockRequest)

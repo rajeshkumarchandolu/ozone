@@ -507,6 +507,8 @@ public class XceiverClientGrpc extends XceiverClientSpi {
         // sendCommandAsyncCall will create a new channel and async stub
         // in case these don't exist for the specific datanode.
         reply.addDatanode(dn);
+        TracingUtil.addAttributesToCurrentSpan(ClientTracingAttributes.HDDS_DATANODE, dn.getHostName());
+        TracingUtil.addAttributesToCurrentSpan(ClientTracingAttributes.HDDS_DATANODE_UUID, dn.getUuidString());
         responseProto = sendCommandAsync(request, dn).getResponse().get();
         if (validators != null && !validators.isEmpty()) {
           for (Validator validator : validators) {
@@ -521,6 +523,8 @@ public class XceiverClientGrpc extends XceiverClientSpi {
       } catch (IOException e) {
         ioException = e;
         responseProto = null;
+        TracingUtil.addEventToCurrentSpan(ClientTracingAttributes.HDDS_DATANODE_FAILED,
+            ClientTracingAttributes.HDDS_DATANODE, dn.getHostName());
         if (LOG.isDebugEnabled()) {
           LOG.debug("Failed to execute command {} on datanode {}",
               processForDebug(request), dn, e);
@@ -537,6 +541,8 @@ public class XceiverClientGrpc extends XceiverClientSpi {
         }
 
         ioException = new IOException(e);
+        TracingUtil.addEventToCurrentSpan(ClientTracingAttributes.HDDS_DATANODE_FAILED,
+            ClientTracingAttributes.HDDS_DATANODE, dn.getHostName());
       } catch (InterruptedException e) {
         LOG.error("Command execution was interrupted ", e);
         Thread.currentThread().interrupt();
