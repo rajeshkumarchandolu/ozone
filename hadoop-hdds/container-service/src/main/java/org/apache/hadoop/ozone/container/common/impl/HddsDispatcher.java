@@ -67,6 +67,7 @@ import org.apache.hadoop.ozone.audit.AuditMarker;
 import org.apache.hadoop.ozone.audit.AuditMessage;
 import org.apache.hadoop.ozone.audit.Auditor;
 import org.apache.hadoop.ozone.audit.DNAction;
+import org.apache.hadoop.ozone.container.common.DatanodeTracingAttributes;
 import org.apache.hadoop.ozone.container.common.helpers.BlockData;
 import org.apache.hadoop.ozone.container.common.helpers.ContainerMetrics;
 import org.apache.hadoop.ozone.container.common.helpers.ContainerUtils;
@@ -224,6 +225,7 @@ public class HddsDispatcher implements ContainerDispatcher, Auditor {
     ContainerCommandResponseProto responseProto = null;
     long startTime = Time.monotonicNowNanos();
     Type cmdType = msg.getCmdType();
+    TracingUtil.addAttributesToCurrentSpan(DatanodeTracingAttributes.DN_CMD_TYPE, cmdType.name());
     long containerID = msg.getContainerID();
     Container container = getContainer(containerID);
     boolean isWriteStage =
@@ -746,6 +748,7 @@ public class HddsDispatcher implements ContainerDispatcher, Auditor {
       AuditEventStatus result, Throwable exception) {
     Map<String, String> params;
     AuditMessage amsg;
+    TracingUtil.addAttributesToCurrentSpan(DatanodeTracingAttributes.STATUS, result.name());
     switch (result) {
     case SUCCESS:
       if (isAllowed(action.getAction())) {
@@ -763,6 +766,7 @@ public class HddsDispatcher implements ContainerDispatcher, Auditor {
       break;
 
     case FAILURE:
+      TracingUtil.recordExceptionInCurrentSpan(exception);
       params = getAuditParams(msg, dispatcherContext);
       if (eventType == EventType.READ &&
           AUDIT.getLogger().isErrorEnabled(AuditMarker.READ.getMarker())) {
@@ -880,6 +884,7 @@ public class HddsDispatcher implements ContainerDispatcher, Auditor {
     Type cmdType = msg.getCmdType();
     String traceID = msg.getTraceID();
     Span span = TracingUtil.importAndCreateSpan(cmdType.toString(), traceID);
+    span.setAttribute(DatanodeTracingAttributes.DN_CMD_TYPE, cmdType.name());
     AuditAction action = getAuditAction(msg.getCmdType());
     EventType eventType = getEventType(msg);
 
@@ -936,6 +941,7 @@ public class HddsDispatcher implements ContainerDispatcher, Auditor {
       audit(action, eventType, msg, dispatcherContext, AuditEventStatus.FAILURE, sce);
       streamObserver.onNext(ContainerUtils.logAndReturnError(LOG, sce, msg));
     } catch (IOException ioe) {
+      TracingUtil.recordExceptionInCurrentSpan(ioe);
       final String s = ContainerProtos.Result.BLOCK_TOKEN_VERIFICATION_FAILED
           + " for " + dispatcherContext + ": " + ioe.getMessage();
       final StorageContainerException sce = new StorageContainerException(
