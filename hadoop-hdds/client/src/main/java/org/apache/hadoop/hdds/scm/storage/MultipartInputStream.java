@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import org.apache.hadoop.fs.FSExceptionMessages;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 
 /**
  * A stream for accessing multipart streams.
@@ -93,8 +94,8 @@ public class MultipartInputStream extends ExtendedInputStream {
       // Get the current partStream and read data from it
       PartInputStream current = partStreams.get(partIndex);
       int numBytesToRead = getNumBytesToRead(strategy, current);
-      int numBytesRead = strategy
-          .readFromBlock((InputStream) current, numBytesToRead);
+      int numBytesRead = TracingUtil.executeInNewSpan("MultipartInputStream.readFromBlock",
+          () -> strategy.readFromBlock((InputStream) current, numBytesToRead));
       checkPartBytesRead(numBytesToRead, numBytesRead, current);
       totalReadLen += numBytesRead;
 
