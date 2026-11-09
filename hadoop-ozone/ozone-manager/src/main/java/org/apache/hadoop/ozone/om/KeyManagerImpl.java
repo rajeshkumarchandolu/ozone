@@ -137,6 +137,7 @@ import org.apache.hadoop.hdds.scm.net.NodeImpl;
 import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.storage.BlockLocationInfo;
 import org.apache.hadoop.hdds.security.token.OzoneBlockTokenSecretManager;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.BackgroundService;
 import org.apache.hadoop.hdds.utils.db.StringCodec;
 import org.apache.hadoop.hdds.utils.db.Table;
@@ -433,6 +434,12 @@ public class KeyManagerImpl implements KeyManager {
     }
   }
 
+  @Override
+  public void restartSnapshotSstFilteringService(OzoneConfiguration conf) {
+    stopSnapshotSstFilteringService();
+    startSnapshotSstFilteringService(conf);
+  }
+
   /**
    * Start the snapshot defrag service if interval is not set to disabled value.
    * @param conf
@@ -582,7 +589,7 @@ public class KeyManagerImpl implements KeyManager {
     Objects.requireNonNull(args, "args == null");
 
     OmKeyInfo value = captureLatencyNs(metrics.getLookupReadKeyInfoLatencyNs(),
-        () -> readKeyInfo(args, bucket.bucketLayout()));
+        () -> TracingUtil.executeInNewSpan("OM.readKeyInfo", () -> readKeyInfo(args, bucket.bucketLayout())));
 
     // If operation is head, do not perform any additional steps based on flags.
     // As head operation does not need any of those details.
@@ -596,10 +603,10 @@ public class KeyManagerImpl implements KeyManager {
       // based on OmKeyArgs.refreshPipeline flag
       // value won't be null as the check is done inside try/catch block.
       captureLatencyNs(metrics.getLookupRefreshLocationLatencyNs(),
-          () -> refresh(value));
+          () -> TracingUtil.executeInNewSpan("OM.refreshPipeline", () -> refresh(value)));
 
       if (args.getSortDatanodes()) {
-        sortDatanodes(clientAddress, value);
+        TracingUtil.executeInNewSpan("OM.sortDatanodes", () -> sortDatanodes(clientAddress, value));
       }
     }
 
@@ -2244,7 +2251,7 @@ public class KeyManagerImpl implements KeyManager {
       }
 
       final String ezKeyName = ezInfo.getKeyName();
-      EncryptedKeyVersion edek = generateEDEK(ezKeyName);
+      EncryptedKeyVersion edek = TracingUtil.executeInNewSpan("OM.key.generateEDEK", () -> generateEDEK(ezKeyName));
       encInfo = new FileEncryptionInfo(ezInfo.getSuite(), ezInfo.getVersion(),
           edek.getEncryptedKeyVersion().getMaterial(),
           edek.getEncryptedKeyIv(),
@@ -2303,8 +2310,7 @@ public class KeyManagerImpl implements KeyManager {
     }
   }
 
-  @VisibleForTesting
-  public List<? extends DatanodeDetails> sortDatanodes(List<? extends DatanodeDetails> nodes,
+  private List<? extends DatanodeDetails> sortDatanodes(List<? extends DatanodeDetails> nodes,
                                              String clientMachine) {
     final NetworkTopology clusterMap = ozoneManager.getClusterMap();
     final Node client = getClientNode(clientMachine, nodes, clusterMap);
@@ -2501,7 +2507,7 @@ public class KeyManagerImpl implements KeyManager {
 
     OmKeyInfo value = captureLatencyNs(
         metrics.getGetKeyInfoReadKeyInfoLatencyNs(),
-        () -> readKeyInfo(args, bucket.bucketLayout()));
+        () -> TracingUtil.executeInNewSpan("OM.readKeyInfo", () -> readKeyInfo(args, bucket.bucketLayout())));
 
     // If operation is head, do not perform any additional steps based on flags.
     // As head operation does not need any of those details.
@@ -2513,12 +2519,12 @@ public class KeyManagerImpl implements KeyManager {
 
       // get container pipeline info from cache.
       captureLatencyNs(metrics.getGetKeyInfoRefreshLocationLatencyNs(),
-          () -> refreshPipelineFromCache(value,
-              args.isForceUpdateContainerCacheFromSCM()));
+          () -> TracingUtil.executeInNewSpan("OM.refreshPipelineFromCache", () -> refreshPipelineFromCache(value,
+              args.isForceUpdateContainerCacheFromSCM())));
 
       if (args.getSortDatanodes()) {
         captureLatencyNs(metrics.getGetKeyInfoSortDatanodesLatencyNs(),
-            () -> sortDatanodes(clientAddress, value));
+            () -> TracingUtil.executeInNewSpan("OM.sortDatanodes", () -> sortDatanodes(clientAddress, value)));
       }
     }
     return value;
@@ -2547,8 +2553,10 @@ public class KeyManagerImpl implements KeyManager {
       throws IOException {
     Set<Long> containerIds = extractContainerIDs(keyInfo)
         .collect(Collectors.toSet());
+    TracingUtil.addAttributesToCurrentSpan(OmTracingAttributes.OM_KEY_CONTAINER_COUNT, containerIds.size());
 
     metrics.setForceContainerCacheRefresh(forceRefresh);
+    TracingUtil.addAttributesToCurrentSpan(OmTracingAttributes.OM_KEY_FORCE_REFRESH, forceRefresh);
     Map<Long, Pipeline> containerLocations =
         scmClient.getContainerLocations(containerIds, forceRefresh);
 
