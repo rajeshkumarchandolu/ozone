@@ -18,6 +18,8 @@
 package org.apache.hadoop.ozone.freon;
 
 import com.codahale.metrics.Timer;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.Span;
 import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,7 +30,6 @@ import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.conf.StorageSize;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationFactor;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationType;
-import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.client.OzoneBucket;
 import org.apache.hadoop.ozone.client.OzoneClient;
 import org.apache.hadoop.ozone.client.io.OzoneDataStreamOutput;
@@ -49,6 +50,11 @@ import picocli.CommandLine.Option;
 @MetaInfServices(FreonSubcommand.class)
 public class OzoneClientKeyGenerator extends BaseFreonGenerator
     implements Callable<Void> {
+
+  private static final AttributeKey<Long> FREON_KEY_INDEX =
+      AttributeKey.longKey("freon.key.index");
+  private static final AttributeKey<String> FREON_KEY_NAME =
+      AttributeKey.stringKey("freon.key.name");
 
   @Option(names = {"-v", "--volume"},
       description = "Name of the volume which contains the test data. Will be"
@@ -96,6 +102,11 @@ public class OzoneClientKeyGenerator extends BaseFreonGenerator
   private ReplicationConfig replicationConfig;
 
   @Override
+  protected boolean useRootTracePerTask() {
+    return true;
+  }
+
+  @Override
   public Void call() throws Exception {
 
     init();
@@ -124,22 +135,24 @@ public class OzoneClientKeyGenerator extends BaseFreonGenerator
     return null;
   }
 
-  private void createKey(long counter) throws Exception {
-    try (TracingUtil.TraceCloseable scope = TracingUtil.createActivatedSpan("createKey")) {
-      createKeyWithData(counter);
+  private void annotateKeyOnActiveSpan(long counter, String key) {
+    Span span = Span.current();
+    if (!span.getSpanContext().isValid()) {
+      return;
     }
+    span.setAttribute(FREON_KEY_INDEX, counter);
+    span.setAttribute(FREON_KEY_NAME, key);
   }
 
-  private void createKeyWithData(long counter) throws Exception {
+  private void createKey(long counter) throws Exception {
     final String key = generateObjectName(counter);
+    annotateKeyOnActiveSpan(counter, key);
+
     timer.time(() -> {
       try (OutputStream stream = bucket.createKey(key, keySize.toBytes(),
           replicationConfig, metadata)) {
-
-        try (TracingUtil.TraceCloseable writeScope = TracingUtil.createActivatedSpan("writeKeyData")) {
-          contentGenerator.write(stream);
-          stream.flush();
-        }
+        contentGenerator.write(stream);
+        stream.flush();
       }
       return null;
     });
@@ -149,6 +162,7 @@ public class OzoneClientKeyGenerator extends BaseFreonGenerator
     final ReplicationConfig conf = ReplicationConfig.fromProtoTypeAndFactor(
         ReplicationType.RATIS, ReplicationFactor.THREE);
     final String key = generateObjectName(counter);
+    annotateKeyOnActiveSpan(counter, key);
 
     timer.time(() -> {
       try (OzoneDataStreamOutput stream = bucket.createStreamKey(
