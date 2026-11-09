@@ -33,6 +33,7 @@ import static org.apache.hadoop.hdds.utils.HddsServerUtil.isServiceUser;
 
 import com.google.common.collect.Maps;
 import com.google.protobuf.BlockingService;
+import io.opentelemetry.api.trace.SpanKind;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -69,6 +70,7 @@ import org.apache.hadoop.hdds.scm.protocol.ScmBlockLocationProtocolServerSideTra
 import org.apache.hadoop.hdds.scm.protocol.StorageContainerLocationInternalInterface;
 import org.apache.hadoop.hdds.scm.protocolPB.ScmBlockLocationProtocolPB;
 import org.apache.hadoop.hdds.scm.protocolPB.StorageContainerLocationProtocolClientSideTranslatorPB.ScmNodeTarget;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.HAUtils;
 import org.apache.hadoop.hdds.utils.HddsServerUtil;
 import org.apache.hadoop.hdds.utils.ProtocolMessageMetrics;
@@ -142,7 +144,8 @@ public class SCMBlockProtocolServer implements
     BlockingService blockProtoPbService =
         ScmBlockLocationProtocolProtos.ScmBlockLocationProtocolService
             .newReflectiveBlockingService(
-                new ScmBlockLocationProtocolServerSideTranslatorPB(this, scm,
+                new ScmBlockLocationProtocolServerSideTranslatorPB(
+                    TracingUtil.createProxy(this, ScmBlockLocationProtocol.class, SpanKind.INTERNAL), scm,
                     protocolMessageMetrics));
 
     final InetSocketAddress scmBlockAddress =
@@ -224,8 +227,11 @@ public class SCMBlockProtocolServer implements
     long startNanos = Time.monotonicNowNanos();
     Map<String, String> auditMap = Maps.newHashMap();
     auditMap.put("size", String.valueOf(size));
+    TracingUtil.addAttributesToCurrentSpan("size", size);
     auditMap.put("num", String.valueOf(num));
+    TracingUtil.addAttributesToCurrentSpan("num", num);
     auditMap.put("replication", replicationConfig.toString());
+    TracingUtil.addAttributesToCurrentSpan("replication", replicationConfig.toString());
     auditMap.put("owner", owner);
     auditMap.put("client", clientMachine);
     List<AllocatedBlock> blocks = new ArrayList<>(num);
@@ -256,6 +262,7 @@ public class SCMBlockProtocolServer implements
       }
 
       auditMap.put("allocated", String.valueOf(blocks.size()));
+      TracingUtil.addAttributesToCurrentSpan("allocated", blocks.size());
       String blockIDs = blocks.stream().limit(10)
           .map(block -> block.getBlockID().toString())
           .collect(Collectors.joining(", ", "[", "]"));
