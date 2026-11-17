@@ -67,6 +67,7 @@ import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 import org.apache.hadoop.hdds.scm.server.upgrade.FinalizationStateManager;
 import org.apache.hadoop.hdds.scm.server.upgrade.ScmVersionManager;
 import org.apache.hadoop.hdds.scm.upgrade.FinalizationStateManagerTestImpl;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.hdds.utils.db.RocksDatabaseException;
 import org.apache.hadoop.hdds.utils.db.Table;
@@ -77,7 +78,9 @@ import org.apache.ozone.test.GenericTestUtils.LogCapturer;
 import org.apache.ratis.proto.RaftProtos;
 import org.apache.ratis.proto.RaftProtos.LogEntryProto;
 import org.apache.ratis.proto.RaftProtos.StateMachineLogEntryProto;
+import org.apache.ratis.protocol.ClientId;
 import org.apache.ratis.protocol.Message;
+import org.apache.ratis.protocol.RaftClientRequest;
 import org.apache.ratis.protocol.RaftGroupId;
 import org.apache.ratis.protocol.RaftGroupMemberId;
 import org.apache.ratis.protocol.RaftPeerId;
@@ -439,6 +442,28 @@ public class TestSCMStateMachine {
     order.verify(buffer).updateLatestTrxInfo(TransactionInfo.valueOf(TermIndex.valueOf(1, 7)));
     order.verify(buffer).flushIfPendingLimitReached();
     order.verify(buffer).endApplyingTransaction();
+  }
+
+  @Test
+  public void testStartAndApplyTransactionAreTraced() throws Exception {
+    SCMHADBTransactionBuffer buffer = mock(SCMHADBTransactionBuffer.class);
+    SCMStateMachine applyingStateMachine = newStateMachine(buffer, RequestType.PIPELINE, succeedingInvoker());
+    RaftClientRequest clientRequest = RaftClientRequest.newBuilder()
+        .setClientId(ClientId.randomId())
+        .setServerId(RaftPeerId.valueOf("scm1"))
+        .setGroupId(RaftGroupId.randomId())
+        .setCallId(1)
+        .setMessage(Message.valueOf("request"))
+        .setType(RaftClientRequest.writeRequestType())
+        .build();
+
+    try (TestSpanCollector spans = TestSpanCollector.install("scm-state-machine-test")) {
+      applyingStateMachine.startTransaction(clientRequest);
+      applyingStateMachine.applyTransaction(newTransaction(RequestType.PIPELINE, 7)).get();
+
+      assertThat(spans.named("SCMStateMachine.startTransaction")).hasSize(1);
+      assertThat(spans.named("SCMStateMachine.applyTransaction")).hasSize(1);
+    }
   }
 
   @Test

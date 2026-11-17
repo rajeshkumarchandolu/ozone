@@ -45,12 +45,14 @@ import org.apache.hadoop.hdds.scm.exceptions.SCMException.ResultCodes;
 import org.apache.hadoop.hdds.scm.ha.invoker.ScmInvoker;
 import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 import org.apache.hadoop.hdds.security.symmetric.ManagedSecretKey;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.hdds.utils.db.DBCheckpoint;
 import org.apache.hadoop.util.Time;
 import org.apache.hadoop.util.concurrent.HadoopExecutors;
 import org.apache.ratis.proto.RaftProtos;
 import org.apache.ratis.protocol.Message;
+import org.apache.ratis.protocol.RaftClientRequest;
 import org.apache.ratis.protocol.RaftGroupId;
 import org.apache.ratis.protocol.RaftGroupMemberId;
 import org.apache.ratis.protocol.RaftPeerId;
@@ -190,8 +192,16 @@ public class SCMStateMachine extends BaseStateMachine {
   }
 
   @Override
-  public CompletableFuture<Message> applyTransaction(
-      final TransactionContext trx) {
+  public TransactionContext startTransaction(RaftClientRequest request) throws IOException {
+    return TracingUtil.executeInNewSpan("SCMStateMachine.startTransaction", () -> super.startTransaction(request));
+  }
+
+  @Override
+  public CompletableFuture<Message> applyTransaction(final TransactionContext trx) {
+    return TracingUtil.executeInNewSpan("SCMStateMachine.applyTransaction", () -> applyTransactionImpl(trx));
+  }
+
+  private CompletableFuture<Message> applyTransactionImpl(final TransactionContext trx) {
     final CompletableFuture<Message> applyTransactionFuture =
         new CompletableFuture<>();
     transactionBuffer.beginApplyingTransaction();
