@@ -23,6 +23,8 @@ import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.ScheduledReporter;
 import com.codahale.metrics.Slf4jReporter;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
@@ -162,6 +164,14 @@ public class BaseFreonGenerator implements FreonSubcommand {
   }
 
   /**
+   * When true, task runners do not inherit the command's trace context,
+   * so each task starts a new trace.
+   */
+  protected boolean useRootTracePerTask() {
+    return false;
+  }
+
+  /**
    * Launches {@code threadNo} task runners in executor.  Each one executes test
    * tasks in a loop until completion or failure.
    */
@@ -176,7 +186,8 @@ public class BaseFreonGenerator implements FreonSubcommand {
    * Wrapper to set up tracing context before entering runTaskLoop.
    */
   private void taskLoop(TaskProvider provider, Context parentContext) {
-    try (Scope ignored = parentContext.makeCurrent()) {
+    Context workerContext = useRootTracePerTask() ? Context.root() : parentContext;
+    try (Scope ignored = workerContext.makeCurrent()) {
       runTaskLoop(provider);
     }
   }
@@ -222,6 +233,10 @@ public class BaseFreonGenerator implements FreonSubcommand {
    */
   private void tryNextTask(TaskProvider provider, long taskId) {
     try (TracingUtil.TraceCloseable ignored = TracingUtil.createActivatedSpan(spanName)) {
+      Span taskSpan = Span.current();
+      if (taskSpan.getSpanContext().isValid()) {
+        taskSpan.setAttribute(AttributeKey.longKey("freon.task.id"), taskId);
+      }
       provider.executeNextTask(taskId);
       successCounter.incrementAndGet();
     } catch (Exception e) {
