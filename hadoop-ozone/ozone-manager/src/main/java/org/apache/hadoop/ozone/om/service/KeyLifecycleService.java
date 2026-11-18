@@ -79,7 +79,7 @@ import org.apache.hadoop.ozone.om.helpers.OmMultipartKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartUpload;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
 import org.apache.hadoop.ozone.om.ratis.utils.OzoneManagerRatisUtils;
-import org.apache.hadoop.ozone.om.request.OMClientRequest;
+import org.apache.hadoop.ozone.om.request.IOMClientRequest;
 import org.apache.hadoop.ozone.om.request.util.OMMultipartUploadUtils;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos;
 import org.apache.hadoop.ozone.protocol.proto.OzoneManagerProtocolProtos.CreateDirectoryRequest;
@@ -320,6 +320,7 @@ public class KeyLifecycleService extends BackgroundService {
     private long lastStateSaveTime = Time.monotonicNow();
     private long lastStateSaveKeyCount = 0;
     private boolean scanAborted;
+    private long stackCapacitySkippedDirectories = 0;
 
     private boolean shouldSaveState() {
       if ((Time.monotonicNow() - lastStateSaveTime) > stateSaveIntervalMs ||
@@ -680,7 +681,7 @@ public class KeyLifecycleService extends BackgroundService {
           stack.push(new PendingEvaluateDirectory(null, "", "", null));
         }
       } catch (CapacityFullException e) {
-        LOG.warn("Abort evaluate {}/{} at {}", volumeName, bucketName, directoryPath != null ? directoryPath : "", e);
+        stackCapacitySkippedDirectories++;
         return;
       }
 
@@ -794,8 +795,8 @@ public class KeyLifecycleService extends BackgroundService {
             try {
               stack.push(item);
             } catch (CapacityFullException e) {
-              LOG.warn("Abort evaluate {}/{} at {}", volumeName, bucketName, currentDirPath, e);
-              return;
+              stackCapacitySkippedDirectories++;
+              continue;
             }
 
             // depth first evaluation, push subDirs into stack
@@ -807,8 +808,10 @@ public class KeyLifecycleService extends BackgroundService {
                 stack.push(new PendingEvaluateDirectory(subDir, subDirSummary.getSubDirKeyList().get(i),
                     subDirPath, null));
               } catch (CapacityFullException e) {
-                LOG.warn("Abort evaluate {}/{} at {}", volumeName, bucketName, subDirPath, e);
-                return;
+                // The stack stays full until an entry is popped, so the remaining siblings cannot be pushed either.
+                // Skipped sub directories are not expired, which also keeps their parent from being expired.
+                stackCapacitySkippedDirectories += subDirSummary.getSubDirCount() - i;
+                break;
               }
             }
             newSubDirPushed = true;
@@ -1369,6 +1372,10 @@ public class KeyLifecycleService extends BackgroundService {
               "aborted {} multipart uploads", timeSpent, bucketName, numKeyIterated,
           numDirIterated, numMultipartUploadIterated, numKeyDeleted, sizeKeyDeleted, numDirDeleted,
           numKeyRenamed, sizeKeyRenamed, numDirRenamed, numMultipartUploadAborted);
+      if (stackCapacitySkippedDirectories > 0) {
+        LOG.info("Lifecycle evaluate for {} skipped {} directories because in-memory directory stack "
+            + "exceeded limit {}", bucketName, stackCapacitySkippedDirectories, cachedDirMaxCount);
+      }
     }
 
     private void onSuccess(String bucketName) {
@@ -1385,6 +1392,10 @@ public class KeyLifecycleService extends BackgroundService {
               "aborted {} multipart uploads", timeSpent, bucketName, numKeyIterated,
           numDirIterated, numMultipartUploadIterated, numKeyDeleted, sizeKeyDeleted, numDirDeleted,
           numKeyRenamed, sizeKeyRenamed, numDirRenamed, numMultipartUploadAborted);
+      if (stackCapacitySkippedDirectories > 0) {
+        LOG.info("Lifecycle evaluate for {} skipped {} directories because in-memory directory stack "
+            + "exceeded limit {}", bucketName, stackCapacitySkippedDirectories, cachedDirMaxCount);
+      }
     }
 
     private void handleAndClearFullList(OmBucketInfo bucket, LimitedExpiredObjectList keysList,
@@ -1494,7 +1505,7 @@ public class KeyLifecycleService extends BackgroundService {
             long startTime = System.nanoTime();
             final OzoneManagerProtocolProtos.OMResponse response;
             try {
-              final OMClientRequest omClientRequest = OzoneManagerRatisUtils.createClientRequest(
+              final IOMClientRequest omClientRequest = OzoneManagerRatisUtils.createClientRequest(
                   omRequestRaw, getOzoneManager());
               response = ugi.doAs(new PrivilegedExceptionAction<OzoneManagerProtocolProtos.OMResponse>() {
                 @Override
@@ -1621,7 +1632,7 @@ public class KeyLifecycleService extends BackgroundService {
             .build();
         try {
           // perform preExecute as ratis submit do no perform preExecute
-          OMClientRequest omClientRequest = OzoneManagerRatisUtils.createClientRequest(omRequest, ozoneManager);
+          IOMClientRequest omClientRequest = OzoneManagerRatisUtils.createClientRequest(omRequest, ozoneManager);
           UserGroupInformation ugi = UserGroupInformation.createRemoteUser(bucket.getOwner());
           OzoneManagerProtocolProtos.OMResponse omResponse =
               ugi.doAs(new PrivilegedExceptionAction<OzoneManagerProtocolProtos.OMResponse>() {
@@ -1684,7 +1695,8 @@ public class KeyLifecycleService extends BackgroundService {
               .build();
           try {
             // perform preExecute as ratis submit do no perform preExecute
-            final OMClientRequest omClientRequest = OzoneManagerRatisUtils.createClientRequest(omRequest, ozoneManager);
+            final IOMClientRequest omClientRequest =
+                OzoneManagerRatisUtils.createClientRequest(omRequest, ozoneManager);
             UserGroupInformation ugi = UserGroupInformation.createRemoteUser(bucket.getOwner());
             OzoneManagerProtocolProtos.OMResponse omResponse =
                 ugi.doAs(new PrivilegedExceptionAction<OzoneManagerProtocolProtos.OMResponse>() {
@@ -1734,6 +1746,11 @@ public class KeyLifecycleService extends BackgroundService {
   @VisibleForTesting
   public void setKeyDeleteBatchSize(int size) {
     this.keyDeleteBatchSize = size;
+  }
+
+  @VisibleForTesting
+  public void setCachedDirMaxCount(long count) {
+    this.cachedDirMaxCount = count;
   }
 
   // Returns the test-injected OzoneTrash if set, otherwise the live instance
@@ -2190,7 +2207,7 @@ public class KeyLifecycleService extends BackgroundService {
         }
       }
       if (parent == null) {
-        // e.g,  dir1 and dir2, dir2 should ahead of dir2, given the depth-first and dir's RocksDB key order
+        // e.g, dir1 and dir2, dir2 should ahead of dir1, given the depth-first and dir's RocksDB key order
         return dirList2.get(0).getName().compareTo(dirList1.get(0).getName());
       } else {
         long parentID = parent.getObjectID();

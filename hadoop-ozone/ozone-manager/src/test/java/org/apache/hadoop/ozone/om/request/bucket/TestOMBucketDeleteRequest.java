@@ -23,14 +23,19 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import java.util.ArrayList;
 import java.util.UUID;
 import org.apache.hadoop.hdds.client.RatisReplicationConfig;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
+import org.apache.hadoop.hdds.tracing.TestSpanCollector;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.db.cache.CacheKey;
 import org.apache.hadoop.hdds.utils.db.cache.CacheValue;
 import org.apache.hadoop.ozone.om.helpers.OmKeyInfo;
 import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfoGroup;
+import org.apache.hadoop.ozone.om.helpers.OmLifecycleScanState;
 import org.apache.hadoop.ozone.om.helpers.OmMultipartKeyInfo;
 import org.apache.hadoop.ozone.om.request.OMRequestTestUtils;
 import org.apache.hadoop.ozone.om.request.util.OMMultipartUploadUtils;
@@ -72,11 +77,37 @@ public class TestOMBucketDeleteRequest extends BucketRequestTests {
     // Create Volume and bucket entries in DB.
     OMRequestTestUtils.addVolumeAndBucketToDB(volumeName, bucketName,
         omMetadataManager);
+    String bucketKey = omMetadataManager.getBucketKey(volumeName, bucketName);
+    omMetadataManager.getLifecycleScanStateTable().put(bucketKey,
+        new OmLifecycleScanState.Builder().setBucketKey(bucketKey).setScanStartTime(Time.now()).build());
 
     omBucketDeleteRequest.validateAndUpdateCache(ozoneManager, 1);
 
     assertNull(omMetadataManager.getBucketTable().get(
         omMetadataManager.getBucketKey(volumeName, bucketName)));
+    assertNull(omMetadataManager.getLifecycleScanStateTable().get(bucketKey));
+  }
+
+  @Test
+  public void testDeleteChecksAreTraced() throws Exception {
+    String volumeName = UUID.randomUUID().toString();
+    String bucketName = UUID.randomUUID().toString();
+    OMBucketDeleteRequest omBucketDeleteRequest = new OMBucketDeleteRequest(
+        createDeleteBucketRequest(volumeName, bucketName));
+    OMRequestTestUtils.addVolumeAndBucketToDB(volumeName, bucketName, omMetadataManager);
+
+    try (TestSpanCollector collector = TestSpanCollector.install("om")) {
+      Span span = TracingUtil.createInternalSpan("request");
+      try (Scope ignored = span.makeCurrent()) {
+        omBucketDeleteRequest.validateAndUpdateCache(ozoneManager, 1);
+      } finally {
+        span.end();
+      }
+
+      collector.assertParent("OM.bucket.isBucketEmpty", "request");
+      collector.assertParent("OM.bucket.checkIncompleteMPUs", "request");
+      collector.assertParent("OM.bucket.checkSnapshots", "request");
+    }
   }
 
   @Test

@@ -28,6 +28,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hadoop.hdds.tracing.SkipTracing;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.hdds.utils.db.cache.TableCacheUpdateTracker;
 import org.apache.hadoop.ipc_.ProtobufRpcEngine;
@@ -37,6 +39,7 @@ import org.apache.hadoop.ozone.audit.AuditAction;
 import org.apache.hadoop.ozone.audit.AuditEventStatus;
 import org.apache.hadoop.ozone.audit.AuditLogger;
 import org.apache.hadoop.ozone.om.IOmMetadataReader;
+import org.apache.hadoop.ozone.om.OMMetadataManager;
 import org.apache.hadoop.ozone.om.OmMetadataReader;
 import org.apache.hadoop.ozone.om.OzoneAclUtils;
 import org.apache.hadoop.ozone.om.OzoneManager;
@@ -45,6 +48,9 @@ import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.execution.flowcontrol.ExecutionContext;
 import org.apache.hadoop.ozone.om.helpers.BucketLayout;
 import org.apache.hadoop.ozone.om.helpers.OMAuditLogger;
+import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
+import org.apache.hadoop.ozone.om.helpers.OmLifecycleConfiguration;
+import org.apache.hadoop.ozone.om.helpers.OmLifecycleScanState;
 import org.apache.hadoop.ozone.om.helpers.OzoneFSUtils;
 import org.apache.hadoop.ozone.om.helpers.S3STSUtils;
 import org.apache.hadoop.ozone.om.lock.OMLockDetails;
@@ -71,7 +77,7 @@ import org.slf4j.LoggerFactory;
  * OMClientRequest provides methods which every write OM request should
  * implement.
  */
-public abstract class OMClientRequest implements RequestAuditor {
+public abstract class OMClientRequest implements IOMClientRequest {
 
   protected static final Logger LOG =
       LoggerFactory.getLogger(OMClientRequest.class);
@@ -83,6 +89,8 @@ public abstract class OMClientRequest implements RequestAuditor {
   private final OMLockDetails omLockDetails = new OMLockDetails();
   private final OMAuditLogger.Builder auditBuilder = OMAuditLogger.newBuilder();
 
+  @Override
+  @SkipTracing
   public OMAuditLogger.Builder getAuditBuilder() {
     return auditBuilder;
   }
@@ -142,6 +150,7 @@ public abstract class OMClientRequest implements RequestAuditor {
    * submission. An example of this would be an undo of any steps
    * taken during pre-execute.
    */
+  @Override
   public void handleRequestFailure(OzoneManager ozoneManager) {
     // Most requests would not have any un-do processing.
   }
@@ -159,6 +168,7 @@ public abstract class OMClientRequest implements RequestAuditor {
    *
    * @return the response that will be returned to the client.
    */
+  @Override
   public abstract OMClientResponse validateAndUpdateCache(OzoneManager ozoneManager, ExecutionContext context);
 
   /** For testing only. */
@@ -173,6 +183,8 @@ public abstract class OMClientRequest implements RequestAuditor {
     }
   }
 
+  @Override
+  @SkipTracing
   @VisibleForTesting
   public OMRequest getOmRequest() {
     return omRequest;
@@ -182,6 +194,8 @@ public abstract class OMClientRequest implements RequestAuditor {
    * Get User information which needs to be set in the OMRequest object.
    * @return User Info.
    */
+  @Override
+  @SkipTracing
   public OzoneManagerProtocolProtos.UserInfo getUserInfo() throws IOException {
     return getUserInfo(omRequest, true);
   }
@@ -529,6 +543,7 @@ public abstract class OMClientRequest implements RequestAuditor {
   protected OMResponse createErrorOMResponse(
       @Nonnull OMResponse.Builder omResponse, @Nonnull Exception ex) {
 
+    TracingUtil.recordExceptionInCurrentSpan(ex);
     omResponse.setSuccess(false);
     String errorMsg = exceptionErrorMessage(ex);
     if (errorMsg != null) {
@@ -557,6 +572,7 @@ public abstract class OMClientRequest implements RequestAuditor {
   }
 
   @Override
+  @SkipTracing
   public OMAuditLogger.Builder buildAuditMessage(AuditAction op,
       Map< String, String > auditMap, Throwable throwable,
       OzoneManagerProtocolProtos.UserInfo userInfo) {
@@ -573,6 +589,7 @@ public abstract class OMClientRequest implements RequestAuditor {
   }
 
   @Override
+  @SkipTracing
   public Map<String, String> buildVolumeAuditMap(String volume) {
     Map<String, String> auditMap = new LinkedHashMap<>();
     auditMap.put(OzoneConsts.VOLUME, volume);
@@ -638,5 +655,20 @@ public abstract class OMClientRequest implements RequestAuditor {
 
   public void mergeOmLockDetails(OMLockDetails details) {
     omLockDetails.merge(details);
+  }
+
+  /**
+   * A scan task may submit its state after the bucket or lifecycle configuration it was scanning is deleted.
+   * Returns false in that case, so the scan state row is not saved to DB.
+   */
+  public static boolean isScanStateValid(OMMetadataManager metadataManager, OmLifecycleScanState state)
+      throws IOException {
+    String bucketKey = state.getBucketKey();
+    OmBucketInfo bucketInfo = metadataManager.getBucketTable().get(bucketKey);
+    if (bucketInfo == null || bucketInfo.getObjectID() != state.getBucketObjID()) {
+      return false;
+    }
+    OmLifecycleConfiguration lcc = metadataManager.getLifecycleConfigurationTable().get(bucketKey);
+    return lcc != null && lcc.getUpdateID() == state.getLifecycleConfigurationUpdateID();
   }
 }

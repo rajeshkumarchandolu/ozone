@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.nio.file.InvalidPathException;
 import java.util.Iterator;
 import java.util.Map;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.db.Table;
 import org.apache.hadoop.hdds.utils.db.TableIterator;
 import org.apache.hadoop.hdds.utils.db.cache.CacheKey;
@@ -74,6 +75,7 @@ public class OMBucketDeleteRequest extends OMClientRequest {
   }
 
   @Override
+  @SuppressWarnings("checkstyle:MethodLength")
   public OMClientResponse validateAndUpdateCache(OzoneManager ozoneManager, ExecutionContext context) {
     final long transactionLogIndex = context.getIndex();
     OMMetrics omMetrics = ozoneManager.getMetrics();
@@ -130,14 +132,16 @@ public class OMBucketDeleteRequest extends OMClientRequest {
       }
 
       //Check if bucket is empty
-      if (!omMetadataManager.isBucketEmpty(volumeName, bucketName)) {
+      if (!TracingUtil.executeInNewSpan("OM.bucket.isBucketEmpty",
+          () -> omMetadataManager.isBucketEmpty(volumeName, bucketName))) {
         LOG.debug("bucket: {} is not empty ", bucketName);
         throw new OMException("Bucket is not empty",
             OMException.ResultCodes.BUCKET_NOT_EMPTY);
       }
 
       // Check if bucket does not contain incomplete MPUs
-      if (omMetadataManager.containsIncompleteMPUs(volumeName, bucketName)) {
+      if (TracingUtil.executeInNewSpan("OM.bucket.checkIncompleteMPUs",
+          () -> omMetadataManager.containsIncompleteMPUs(volumeName, bucketName))) {
         LOG.debug("Volume '{}', Bucket '{}' can't be deleted when it has " +
                 "incomplete multipart uploads", volumeName, bucketName);
         throw new OMException(
@@ -149,7 +153,8 @@ public class OMBucketDeleteRequest extends OMClientRequest {
       // appending '/' to end to eliminate cases where 2 buckets start with same characters.
       String snapshotBucketKey = bucketKey + OzoneConsts.OM_KEY_PREFIX;
 
-      if (bucketContainsSnapshot(omMetadataManager, snapshotBucketKey)) {
+      if (TracingUtil.executeInNewSpan("OM.bucket.checkSnapshots",
+          () -> bucketContainsSnapshot(omMetadataManager, snapshotBucketKey))) {
         LOG.debug("Bucket '{}' can't be deleted when it has snapshots",
             bucketName);
         throw new OMException(
@@ -170,6 +175,8 @@ public class OMBucketDeleteRequest extends OMClientRequest {
       omMetadataManager.getLifecycleConfigurationTable().addCacheEntry(
           new CacheKey<>(bucketKey),
           CacheValue.get(transactionLogIndex));
+      omMetadataManager.getLifecycleScanStateTable().addCacheEntry(
+          new CacheKey<>(bucketKey), CacheValue.get(transactionLogIndex));
       omResponse.setDeleteBucketResponse(DeleteBucketResponse.newBuilder().build());
       // update used namespace for volume
       String volumeKey = omMetadataManager.getVolumeKey(volumeName);
