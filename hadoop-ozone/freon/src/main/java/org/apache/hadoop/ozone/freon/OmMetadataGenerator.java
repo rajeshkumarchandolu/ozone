@@ -121,6 +121,13 @@ public class OmMetadataGenerator extends BaseFreonGenerator
       defaultValue = "false")
   private boolean randomOp;
 
+  @Option(
+      names = "--nested",
+      description = "CREATE_FILE creates each file inside its own new directory,"
+          + " which RENAME_DIR can rename.",
+      defaultValue = "false")
+  private boolean nested;
+
   @Option(names = {"-o", "--operation"},
       description = "The operation to perform, --ophelp Print detail")
   private Operation operation;
@@ -402,9 +409,16 @@ public class OmMetadataGenerator extends BaseFreonGenerator
           clientProtocol.readFile(volumeName, bucketName, keyName), readBuffer));
       break;
     case CREATE_FILE:
+      final String fileName = nested ? keyName + "/file" : keyName;
       getMetrics().timer(operation.name()).time(() -> performWriteOperation(() ->
-          clientProtocol.createFile(volumeName, bucketName, keyName, dataSize.toBytes(),
-              replicationConfig, true, false), contentGenerator));
+          clientProtocol.createFile(volumeName, bucketName, fileName, dataSize.toBytes(),
+              replicationConfig, true, nested), contentGenerator));
+      break;
+    case RENAME_DIR:
+      getMetrics().timer(operation.name()).time(() -> {
+        clientProtocol.renameKey(volumeName, bucketName, keyName, keyName + "_renamed", true);
+        return null;
+      });
       break;
     case CREATE_STREAM_FILE:
       getMetrics().timer(operation.name()).time(() -> performWriteOperation(() ->
@@ -531,6 +545,7 @@ public class OmMetadataGenerator extends BaseFreonGenerator
     LIST_KEYS_LIGHT,
     INFO_BUCKET,
     INFO_VOLUME,
+    RENAME_DIR,
     MIXED,
   }
 
