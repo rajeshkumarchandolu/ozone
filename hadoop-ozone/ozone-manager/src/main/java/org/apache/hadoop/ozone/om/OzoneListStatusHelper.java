@@ -35,6 +35,7 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.hdds.client.DefaultReplicationConfig;
 import org.apache.hadoop.hdds.client.ReplicationConfig;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.helpers.BucketLayout;
 import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
@@ -233,6 +234,7 @@ public class OzoneListStatusHelper {
 
     TreeMap<String, OzoneFileStatus> map = new TreeMap<>();
     try (
+        TracingUtil.TraceCloseable ignored = TracingUtil.createActivatedSpan("OM.db.listStatus.scan");
         ListIterator.MinHeapIterator heapIterator = new ListIterator.MinHeapIterator(
             metadataManager, dbPrefixKey, bucketLayout, startKeyPrefix,
             volumeName, bucketName)) {

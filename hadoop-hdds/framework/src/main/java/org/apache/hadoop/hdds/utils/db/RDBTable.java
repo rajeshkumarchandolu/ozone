@@ -25,9 +25,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.Supplier;
 import org.apache.hadoop.hdds.annotation.InterfaceAudience;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.MetadataKeyFilters.KeyPrefixFilter;
 import org.apache.hadoop.hdds.utils.db.RocksDatabase.ColumnFamily;
 import org.apache.hadoop.util.Time;
+import org.apache.ratis.util.function.CheckedSupplier;
 import org.rocksdb.ByteBufferGetStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +44,8 @@ class RDBTable implements Table<byte[], byte[]> {
 
   private static final Logger LOG =
       LoggerFactory.getLogger(RDBTable.class);
+
+  private static final String COLUMN_FAMILY_ATTRIBUTE = "db.column_family";
 
   private final RocksDatabase db;
   private final ColumnFamily family;
@@ -101,6 +105,10 @@ class RDBTable implements Table<byte[], byte[]> {
 
   @Override
   public boolean isExist(byte[] key) throws RocksDatabaseException {
+    return traceRead("RDBTable.isExist", () -> isExistImpl(key));
+  }
+
+  private boolean isExistImpl(byte[] key) throws RocksDatabaseException {
     rdbMetrics.incNumDBKeyMayExistChecks();
     final Supplier<byte[]> valueSupplier = db.keyMayExist(family, key);
     if (valueSupplier == null) {
@@ -122,7 +130,7 @@ class RDBTable implements Table<byte[], byte[]> {
   @Override
   public byte[] get(byte[] key) throws RocksDatabaseException {
     rdbMetrics.incNumDBKeyGets();
-    return db.get(family, key);
+    return traceRead("RDBTable.get", () -> db.get(family, key));
   }
 
   @Override
@@ -133,11 +141,11 @@ class RDBTable implements Table<byte[], byte[]> {
     for (byte[] ignored : keys) {
       rdbMetrics.incNumDBKeyGets();
     }
-    return db.multiGet(family, keys);
+    return traceRead("RDBTable.multiGetSkipCache", () -> db.multiGet(family, keys));
   }
 
   Integer get(ByteBuffer key, ByteBuffer outValue) throws RocksDatabaseException {
-    return db.get(family, key, outValue);
+    return traceRead("RDBTable.get", () -> db.get(family, key, outValue));
   }
 
   List<ByteBufferGetStatus> multiGetSkipCache(List<ByteBuffer> keys, List<ByteBuffer> values)
@@ -148,7 +156,7 @@ class RDBTable implements Table<byte[], byte[]> {
     for (ByteBuffer ignored : keys) {
       rdbMetrics.incNumDBKeyGets();
     }
-    return db.multiGet(family, keys, values);
+    return traceRead("RDBTable.multiGetSkipCache", () -> db.multiGet(family, keys, values));
   }
 
   /**
@@ -165,6 +173,10 @@ class RDBTable implements Table<byte[], byte[]> {
 
   @Override
   public byte[] getIfExist(byte[] key) throws RocksDatabaseException {
+    return traceRead("RDBTable.getIfExist", () -> getIfExistImpl(key));
+  }
+
+  private byte[] getIfExistImpl(byte[] key) throws RocksDatabaseException {
     rdbMetrics.incNumDBKeyGetIfExistChecks();
     final Supplier<byte[]> valueSupplier = db.keyMayExist(family, key);
     if (valueSupplier == null) {
@@ -185,6 +197,10 @@ class RDBTable implements Table<byte[], byte[]> {
   }
 
   Integer getIfExist(ByteBuffer key, ByteBuffer outValue) throws RocksDatabaseException {
+    return traceRead("RDBTable.getIfExist", () -> getIfExistImpl(key, outValue));
+  }
+
+  private Integer getIfExistImpl(ByteBuffer key, ByteBuffer outValue) throws RocksDatabaseException {
     rdbMetrics.incNumDBKeyGetIfExistChecks();
     // Note: RocksDatabase.keyMayExist duplicates the key internally, so the caller's
     // key buffer position is preserved for the fallback point-get below.
@@ -362,5 +378,17 @@ class RDBTable implements Table<byte[], byte[]> {
       }
     }
     return result;
+  }
+
+  /** Traces a read only as a child of a recording span, so background reads never start a new trace. */
+  private <R> R traceRead(String spanName, CheckedSupplier<R, RocksDatabaseException> read)
+      throws RocksDatabaseException {
+    if (!TracingUtil.getActiveSpan().isRecording()) {
+      return read.get();
+    }
+    return TracingUtil.executeInNewSpan(spanName, () -> {
+      TracingUtil.addAttributesToCurrentSpan(COLUMN_FAMILY_ATTRIBUTE, family.getName());
+      return read.get();
+    });
   }
 }
