@@ -24,6 +24,7 @@ import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_MANAGER_STRIPED_LOCK
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.Striped;
+import io.opentelemetry.api.trace.Span;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
@@ -39,10 +40,13 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.apache.hadoop.hdds.conf.ConfigurationSource;
+import org.apache.hadoop.hdds.tracing.SkipTracing;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.CompositeKey;
 import org.apache.hadoop.hdds.utils.SimpleStriped;
 import org.apache.hadoop.ipc_.ProcessingDetails.Timing;
 import org.apache.hadoop.ipc_.Server;
+import org.apache.hadoop.ozone.om.OmTracingAttributes;
 import org.apache.hadoop.util.Time;
 import org.apache.ratis.util.CollectionUtils;
 import org.apache.ratis.util.Preconditions;
@@ -143,6 +147,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
 
     private OMLockDetails acquireImpl(Resource resource, BiConsumer<R, Long> acquireLockMethod) {
       final R r = assertAcquire(resource);
+      TracingUtil.addAttributesToCurrentSpan(OmTracingAttributes.OM_LOCK_RESOURCE, r.getName());
       final long startWaitingTimeNanos = Time.monotonicNowNanos();
       acquireLockMethod.accept(r, startWaitingTimeNanos);
       return tracker.lockResource(r);
@@ -305,14 +310,23 @@ public class OzoneManagerLock implements IOzoneManagerLock {
     return deque::descendingIterator;
   }
 
+  private static void addLockKeysToCurrentSpan(String... keys) {
+    Span span = Span.current();
+    if (span.isRecording()) {
+      span.setAttribute(OmTracingAttributes.OM_LOCK_KEYS, String.join("/", keys));
+    }
+  }
+
   @Override
   public OMLockDetails acquireReadLock(Resource resource, String key) {
+    addLockKeysToCurrentSpan(key);
     return getResourceLocks(resource)
         .acquireOne(resource, true, key);
   }
 
   @Override
   public OMLockDetails acquireReadLock(Resource resource, String key1, String key2) {
+    addLockKeysToCurrentSpan(key1, key2);
     return getResourceLocks(resource)
         .acquireOne(resource, true, CompositeKey.combineTwoKeys(key1, key2));
   }
@@ -320,6 +334,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
   @Override
   public OMLockDetails acquireReadLock(Resource resource, String... keys) {
     Preconditions.assertTrue(keys.length > 2);
+    addLockKeysToCurrentSpan(keys);
     return getResourceLocks(resource)
         .acquireOne(resource, true, CompositeKey.combineMultiKeys(keys));
   }
@@ -332,18 +347,21 @@ public class OzoneManagerLock implements IOzoneManagerLock {
 
   @Override
   public OMLockDetails acquireWriteLock(Resource resource, String key) {
+    addLockKeysToCurrentSpan(key);
     return getResourceLocks(resource)
         .acquireOne(resource, false, key);
   }
 
   @Override
   public OMLockDetails acquireWriteLock(Resource resource, String key1, String key2) {
+    addLockKeysToCurrentSpan(key1, key2);
     return getResourceLocks(resource)
         .acquireOne(resource, false, CompositeKey.combineTwoKeys(key1, key2));
   }
 
   @Override
   public OMLockDetails acquireWriteLock(Resource resource, String... keys) {
+    addLockKeysToCurrentSpan(keys);
     return getResourceLocks(resource)
         .acquireOne(resource, false, CompositeKey.combineMultiKeys(keys));
   }
@@ -397,6 +415,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
       omLockMetrics.setReadLockWaitingTimeMsStat(
           TimeUnit.NANOSECONDS.toMillis(readLockWaitingTimeNanos));
       updateProcessingDetails(tracker, Timing.LOCKWAIT, readLockWaitingTimeNanos);
+      TracingUtil.addAttributesToCurrentSpan(OmTracingAttributes.OM_LOCK_WAIT_NS, readLockWaitingTimeNanos);
 
       resource.getResourceManager().setStartReadHeldTimeNanos(Time.monotonicNowNanos());
     }
@@ -418,6 +437,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
       omLockMetrics.setWriteLockWaitingTimeMsStat(
           TimeUnit.NANOSECONDS.toMillis(writeLockWaitingTimeNanos));
       updateProcessingDetails(tracker, Timing.LOCKWAIT, writeLockWaitingTimeNanos);
+      TracingUtil.addAttributesToCurrentSpan(OmTracingAttributes.OM_LOCK_WAIT_NS, writeLockWaitingTimeNanos);
 
       resource.getResourceManager().setStartWriteHeldTimeNanos(Time.monotonicNowNanos());
     }
@@ -443,24 +463,28 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    * @param secondUser
    */
   @Override
+  @SkipTracing
   public void releaseMultiUserLock(String firstUser, String secondUser) {
     releaseWriteLocks(LeveledResource.USER_LOCK,
         Arrays.asList(new String[] {firstUser}, new String[] {secondUser}));
   }
 
   @Override
+  @SkipTracing
   public OMLockDetails releaseWriteLock(Resource resource, String key) {
     return getResourceLocks(resource)
         .releaseOne(resource, false, key);
   }
 
   @Override
+  @SkipTracing
   public OMLockDetails releaseWriteLock(Resource resource, String key1, String key2) {
     return getResourceLocks(resource)
         .releaseOne(resource, false, CompositeKey.combineTwoKeys(key1, key2));
   }
 
   @Override
+  @SkipTracing
   public OMLockDetails releaseWriteLock(Resource resource, String... keys) {
     return getResourceLocks(resource)
         .releaseOne(resource, false, CompositeKey.combineMultiKeys(keys));
@@ -475,6 +499,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    * be passed.
    */
   @Override
+  @SkipTracing
   public OMLockDetails releaseWriteLocks(Resource resource, Iterable<String[]> keys) {
     return getResourceLocks(resource)
         .releaseSelected(resource, false, keys);
@@ -486,24 +511,28 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    * @param resource The resource for which the write lock is to be acquired.
    */
   @Override
+  @SkipTracing
   public OMLockDetails releaseResourceWriteLock(Resource resource) {
     return getResourceLocks(resource)
         .releaseAll(resource);
   }
 
   @Override
+  @SkipTracing
   public OMLockDetails releaseReadLock(Resource resource, String key) {
     return getResourceLocks(resource)
         .releaseOne(resource, true, key);
   }
 
   @Override
+  @SkipTracing
   public OMLockDetails releaseReadLock(Resource resource, String key1, String key2) {
     return getResourceLocks(resource)
         .releaseOne(resource, true, CompositeKey.combineTwoKeys(key1, key2));
   }
 
   @Override
+  @SkipTracing
   public OMLockDetails releaseReadLock(Resource resource, String... keys) {
     return getResourceLocks(resource)
         .releaseOne(resource, true, CompositeKey.combineMultiKeys(keys));
@@ -518,6 +547,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    * be passed.
    */
   @Override
+  @SkipTracing
   public OMLockDetails releaseReadLocks(Resource resource, Iterable<String[]> keys) {
     return getResourceLocks(resource)
         .releaseSelected(resource, true, keys);
@@ -564,6 +594,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    * @return readHoldCount
    */
   @Override
+  @SkipTracing
   @VisibleForTesting
   public int getReadHoldCount(Resource resource, String... keys) {
     return getResourceLocks(resource).getLockForTesting(resource, keys).getReadHoldCount();
@@ -576,6 +607,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    * @return writeHoldCount
    */
   @Override
+  @SkipTracing
   @VisibleForTesting
   public int getWriteHoldCount(Resource resource, String... keys) {
     return getResourceLocks(resource).getLockForTesting(resource, keys).getWriteHoldCount();
@@ -589,6 +621,7 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    *         {@code false} otherwise
    */
   @Override
+  @SkipTracing
   @VisibleForTesting
   public boolean isWriteLockedByCurrentThread(Resource resource, String... keys) {
     return getResourceLocks(resource).getLockForTesting(resource, keys).isWriteLockedByCurrentThread();
@@ -598,11 +631,13 @@ public class OzoneManagerLock implements IOzoneManagerLock {
    * Unregisters OMLockMetrics source.
    */
   @Override
+  @SkipTracing
   public void cleanup() {
     omLockMetrics.unRegister();
   }
 
   @Override
+  @SkipTracing
   public OMLockMetrics getOMLockMetrics() {
     return omLockMetrics;
   }

@@ -76,6 +76,7 @@ import java.util.stream.Stream;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.hdds.client.BlockID;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
+import org.apache.hadoop.hdds.tracing.TracingUtil;
 import org.apache.hadoop.hdds.utils.TableCacheMetrics;
 import org.apache.hadoop.hdds.utils.TransactionInfo;
 import org.apache.hadoop.hdds.utils.db.BatchOperation;
@@ -225,7 +226,7 @@ public class OmMetadataManagerImpl implements OMMetadataManager,
     } else {
       this.perfMetrics = this.ozoneManager.getPerfMetrics();
     }
-    this.lock = new OzoneManagerLock(conf);
+    this.lock = TracingUtil.createInternalProxy(new OzoneManagerLock(conf), IOzoneManagerLock.class, conf);
     this.hierarchicalLockManager = new PoolBasedHierarchicalResourceLockManager(conf);
     this.omEpoch = OmUtils.getOMEpoch();
     start(conf);

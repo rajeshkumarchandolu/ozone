@@ -41,8 +41,14 @@ public final class OmTracingAttributes {
   /** Raft role of the OM applying a transaction: leader or follower. */
   public static final String OM_ROLE = "om.role";
 
-  /** Time an OM request waited for its locks, in nanoseconds. */
+  /** Time an OM request, or a single lock acquire, waited for its locks, in nanoseconds. */
   public static final String OM_LOCK_WAIT_NS = "om.lock.wait_ns";
+
+  /** OM lock resource, for example {@code BUCKET_LOCK}. */
+  public static final String OM_LOCK_RESOURCE = "om.lock.resource";
+
+  /** Keys of a single OM lock acquire joined by '/', for example {@code vol1/bucket1} for a bucket lock. */
+  public static final String OM_LOCK_KEYS = "om.lock.keys";
 
   /** Time an OM request held read locks, in nanoseconds. */
   public static final String OM_LOCK_READ_NS = "om.lock.read_ns";
