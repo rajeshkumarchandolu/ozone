@@ -160,7 +160,12 @@ public class BaseFreonGenerator implements FreonSubcommand {
    */
   private void setup(TaskProvider provider) {
     //provider is usually a lambda, print out only the owner class name:
-    spanName = provider.getClass().getSimpleName().split("\\$")[0];
+    spanName = getTaskSpanName(provider.getClass().getSimpleName().split("\\$")[0]);
+  }
+
+  /** Name of the span of each task; generators can add what the task does. */
+  protected String getTaskSpanName(String defaultName) {
+    return defaultName;
   }
 
   /**

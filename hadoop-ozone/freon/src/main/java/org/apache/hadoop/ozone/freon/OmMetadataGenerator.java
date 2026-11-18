@@ -172,6 +172,16 @@ public class OmMetadataGenerator extends BaseFreonGenerator
   private boolean mixedOperation = false;
 
   @Override
+  protected boolean useRootTracePerTask() {
+    return true;
+  }
+
+  @Override
+  protected String getTaskSpanName(String defaultName) {
+    return defaultName + "." + operation;
+  }
+
+  @Override
   public Void call() throws Exception {
     if (opHelp || operation == null) {
       System.out.println(getUsage());
