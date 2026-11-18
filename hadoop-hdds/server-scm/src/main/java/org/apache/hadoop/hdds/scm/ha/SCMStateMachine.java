@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Collection;
@@ -37,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 import org.apache.hadoop.hdds.protocol.proto.SCMRatisProtocol.RequestType;
+import org.apache.hadoop.hdds.scm.ScmTracingAttributes;
 import org.apache.hadoop.hdds.scm.block.DeletedBlockLog;
 import org.apache.hadoop.hdds.scm.block.DeletedBlockLogImpl;
 import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMMetrics;
@@ -193,15 +195,15 @@ public class SCMStateMachine extends BaseStateMachine {
 
   @Override
   public TransactionContext startTransaction(RaftClientRequest request) throws IOException {
-    return TracingUtil.executeInNewSpan("SCMStateMachine.startTransaction", () -> super.startTransaction(request));
+    final SCMRatisRequest scmRequest = SCMRatisRequest.decode(request.getMessage());
+    Span span = TracingUtil.importAndCreateSpan("SCMStateMachine.startTransaction", scmRequest.getTraceID());
+    span.setAttribute(ScmTracingAttributes.SCM_RATIS_METHOD, scmRequest.getOperation());
+    return TracingUtil.executeInSpan(span, () -> super.startTransaction(request));
   }
 
   @Override
-  public CompletableFuture<Message> applyTransaction(final TransactionContext trx) {
-    return TracingUtil.executeInNewSpan("SCMStateMachine.applyTransaction", () -> applyTransactionImpl(trx));
-  }
-
-  private CompletableFuture<Message> applyTransactionImpl(final TransactionContext trx) {
+  public CompletableFuture<Message> applyTransaction(
+      final TransactionContext trx) {
     final CompletableFuture<Message> applyTransactionFuture =
         new CompletableFuture<>();
     transactionBuffer.beginApplyingTransaction();
@@ -212,8 +214,10 @@ public class SCMStateMachine extends BaseStateMachine {
       if (LOG.isDebugEnabled()) {
         LOG.debug("{}: applyTransaction {}", getId(), TermIndex.valueOf(trx.getLogEntry()));
       }
+      Span span = TracingUtil.importAndCreateSpan("SCMStateMachine.applyTransaction", request.getTraceID());
+      span.setAttribute(ScmTracingAttributes.SCM_RATIS_METHOD, request.getOperation());
       try {
-        applyTransactionFuture.complete(process(request));
+        applyTransactionFuture.complete(TracingUtil.executeInSpan(span, () -> process(request)));
       } catch (SCMException ex) {
         // For SCM exceptions while applying a transaction, if the error
         // code indicate a FATAL issue, let it crash SCM.
